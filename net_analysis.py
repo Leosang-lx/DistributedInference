@@ -427,7 +427,7 @@ def gen_executionUnits(n_device: int, workload_partition, topology_list):
 
 
 if __name__ == '__main__':
-    model.input_shape = (3, 600, 600)
+    model.input_shape = 3, 600, 600
     layers_dependency = next_to_last(next)
     n_layers = len(layers_dependency)
     topology_layers = topology_DAG(next, layers_dependency)
@@ -548,7 +548,7 @@ if __name__ == '__main__':
             except Exception as e:
                 print(f'Error occurred when send subtasks: {e}')
 
-        start = time.time()
+        start = time.time()  # worker接受所有tasks需要花很多时间
         for device, first_input in enumerate(first_inputs):
             try:
                 send_data(m.worker_sockets[device], first_input)
@@ -558,6 +558,7 @@ if __name__ == '__main__':
         try:
             data = recv_data(m.worker_sockets[0])
             consumption = time.time() - start
+            print(torch.allclose(outputs[-1], data))
             print(f'Recv final result in {consumption}s')
         except timeout:
             print('Recv results time out!')

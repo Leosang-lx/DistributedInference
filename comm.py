@@ -24,15 +24,6 @@ data_header_format = 'I'
 data_header_size = struct.calcsize(data_header_format)
 
 
-async def async_send_data(send_socket: socket, data):
-    print(f'send output of layer {data[0][0]}')
-    serialized = pickle.dumps(data)
-    data_size = len(serialized)
-    header = struct.pack(data_header_format, data_size)
-    res = send_socket.sendall(header + serialized)
-    return res
-
-
 def send_data(send_socket: socket, data):
     serialized = pickle.dumps(data)
     data_size = len(serialized)
@@ -73,6 +64,15 @@ def send_tensor(send_socket: socket, data: Tensor, layer_num: int, data_range: t
     return res
 
 
+async def async_send_tensor(send_socket: socket, data: Tensor, layer_num: int, data_range: tuple[int, int]):
+    print(f'send output of layer {layer_num}')
+    serialized = pickle.dumps(data)
+    data_size = len(serialized)
+    header = struct.pack(__format__, data_size, layer_num, *data_range)
+    res = send_socket.sendall(header + serialized)
+    return res
+
+
 def recv_tensor(recv_socket: socket):
     data = recv_socket.recv(__size__)
     header = struct.unpack(__format__, data)
@@ -82,4 +82,4 @@ def recv_tensor(recv_socket: socket):
         recv = recv_socket.recv(min(4096, data_size))
         data += recv
         data_size -= len(recv)
-    return pickle.loads(data), header[1], (header[2], header[3])  # data, layer_num, range
+    return (header[1], (header[2], header[3])), pickle.loads(data)  # (layer_num, range) data

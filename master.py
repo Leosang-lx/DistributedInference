@@ -1,10 +1,6 @@
 import sys
 import threading
 import time
-
-import torch
-
-from comm import async_send_data, recv_data, send_tensor, recv_tensor, send_data
 from worker import master_ip, __subnet__, __port__
 from util import *
 from queue import SimpleQueue

@@ -53,7 +53,7 @@ def input_satisfactory(required_input: tuple, recv_list: list):  # 判断require
     """
     judge whether the required input of sub-task is satisfied with recv inputs
     :param required_input: a tuple (dependent layers in list, required input range)
-    :param recv_list:
+    :param recv_list: recv input stored by layers
     :return: return the required concat input else None
     """
     dependent_layers, input_range = required_input
@@ -62,7 +62,7 @@ def input_satisfactory(required_input: tuple, recv_list: list):  # 判断require
         collect = []
         for i, dl in enumerate(dependent_layers):
             outputs = recv_list[dl]
-            if len(recv_list[dl]) == input_range[i]:
+            if len(outputs) == input_range[i]:
                 outputs.sort(key=lambda x: x[0][0])
                 outputs = [data[1] for data in outputs]
                 collect.append(torch.cat(outputs, -1))  # item in recv_list is (global range, data)

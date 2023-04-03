@@ -1,5 +1,4 @@
 import asyncio
-import socket
 import threading
 import time
 
@@ -7,7 +6,6 @@ import select
 
 from util import *
 from comm import *
-from ExecutionUnit import ExecutionUnit
 
 __subnet__ = '192.168.1'
 __port__ = 49999
@@ -148,13 +146,13 @@ class Worker:
         except Exception as e:
             print(e)
 
+        accumulated_time = 0
         while True:
             # self.get_available_task()
 
-            ready = select.select(self.recv_list, [], [], 0.001)
-            read_ready = ready[0]
+            read_ready, _, _ = select.select(self.recv_list, [], [], 0.001)
             for sock in read_ready:
-                source, data = recv_data(sock)
+                source, data = recv_tensor(sock)
                 layer_no, input_range = source
                 print(f'Recv layer {layer_no} output')
                 self.recv_inputs[layer_no].append((input_range, data))
@@ -168,20 +166,19 @@ class Worker:
                 task, args = from_queue
                 # assert isinstance(task, ExecutionUnit)
                 print(f'Execute task {task.layer_num}')
+                start = time.time()
                 output = task.execute(*args)
-                # if task.forwarding == 1:
-                #     try:
-                #         send_data(self.master_socket, output)
-                #         print('Send final output to master')
-                #     except Exception as e:
-                #         print(f'Error occurs when sending final output to master: {e}')
-                # else:
-                if task.layer_num == self.model.depth - 1:
+                accumulated_time += time.time() - start
+
+                if task.layer_num == self.model.depth - 1:  # the subtask of last layer
                     try:
                         # asyncio.create_task(async_send_data(self.master_socket, output))
-                        await async_send_data(self.master_socket, output)
+                        # await async_send_data(self.master_socket, output)
+                        send_data(self.master_socket, output)
+                        print(f'Accumulated execution time is {accumulated_time}')
                     except Exception as e:
                         print(f'Error occurs when sending final output to master: {e}')
+
                 for f in task.forwarding:
                     if len(f) == 2:  # (to_device, interval)
                         to_device, interval = f
@@ -192,15 +189,16 @@ class Worker:
                     if to_device == self.number:
                         self.recv_inputs[task.layer_num].append(((l, r), output[..., interval[0]:interval[1]]))
                     else:
+                        # try:
+                        #     send_tensor(self.send_sockets[to_device], output[..., interval[0]:interval[1]], task.layer_num, (l, r))
                         try:
                             # async_task = asyncio.create_task(async_send_data(self.send_sockets[to_device], (
                             # (task.layer_num, (l, r)), output[..., interval[0]:interval[1]])))
-                            await async_send_data(self.send_sockets[to_device], (
-                            (task.layer_num, (l, r)), output[..., interval[0]:interval[1]]))
                             # await async_task
+                            await async_send_tensor(self.send_sockets[to_device], output[..., interval[0]:interval[1]],
+                                                    task.layer_num, (l, r))
                         except Exception as e:
                             print(f'Error occurs when sending output: {e}')
-
 
     # def recv_input(self, recv_socket):  # start n_workers-1 thread to recv input from other workers
     #     while True:
@@ -211,7 +209,6 @@ class Worker:
     #         time.sleep(0.1)
 
     def get_available_task(self):
-
         task = None
         while True:
             if task is None:
@@ -224,7 +221,6 @@ class Worker:
                 continue
                 # return
             else:
-
                 print(f'Task {task.layer_num} is ready')
                 args = [required_input]
                 if task.operator['type'] == 'basicConv':

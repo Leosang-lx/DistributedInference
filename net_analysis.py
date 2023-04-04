@@ -1,7 +1,7 @@
 import queue
 import threading
 import time
-
+import asyncio
 import numpy as np
 import torch
 from torch import nn
@@ -437,10 +437,12 @@ if __name__ == '__main__':
 
     n_device = 2
     model.output_shapes = cal_output_shape(model, topology_layers, layers_dependency)
-    for i in range(len(model.output_shapes)):
-        print(f'{i}: {model.output_shapes[i]}')
+    # for i in range(len(model.output_shapes)):
+        # print(f'{i}: {model.output_shapes[i]}')
 
     partitions = workload_split(num_device=n_device)
+    for i, partition in enumerate(partitions):
+        print(f'{i}: {partition}')
     # print(partitions[73:])
 
     workload_dependency = gen_inputDependency(layers, topology_layers, partitions, layers_dependency)
@@ -537,23 +539,34 @@ if __name__ == '__main__':
         # print(torch.equal(right_output, result))
     else:  # online testing
         from master import Master
-        m = Master()
+        m = Master(num_required_worker=n_device)
         m.start()
         time.sleep(2)
         first_inputs = [x[..., ri[0]:ri[1]] for ri in required_inputs]
+        loop = asyncio.get_event_loop()
         print('Send subtasks and input to workers...')
-        for device, eus in enumerate(execution_units):
-            try:
-                send_data(m.worker_sockets[device], eus)
-            except Exception as e:
-                print(f'Error occurred when send subtasks: {e}')
+        try:
+            send_tasks = [async_send_data(m.worker_sockets[device], eus) for device, eus in enumerate(execution_units)]
+            loop.run_until_complete(asyncio.gather(*send_tasks))
+        except Exception as e:
+            print(f'Error occurred when send subtasks:\n{e}')
+        # for device, eus in enumerate(execution_units):
+        #     try:
+        #         send_data(m.worker_sockets[device], eus)
+        #     except Exception as e:
+        #         print(f'Error occurred when send subtasks:\n{e}')
 
         start = time.time()  # worker接受所有tasks需要花很多时间
-        for device, first_input in enumerate(first_inputs):
-            try:
-                send_data(m.worker_sockets[device], first_input)
-            except Exception as e:
-                print(f'Error occurred when send subtasks: {e}')
+        try:
+            send_tasks = [async_send_data(m.worker_sockets[device], first_input) for device, first_input in enumerate(first_inputs)]
+            loop.run_until_complete(asyncio.gather(*send_tasks))
+        except Exception as e:
+            print(f'Error occurred when send required input to workers:\n{e}')
+        # for device, first_input in enumerate(first_inputs):
+        #     try:
+        #         send_data(m.worker_sockets[device], first_input)
+        #     except Exception as e:
+        #         print(f'Error occurred when send subtasks: {e}')
 
         try:
             data = recv_data(m.worker_sockets[0])

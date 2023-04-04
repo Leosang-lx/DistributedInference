@@ -20,7 +20,7 @@ def recv_message(conn: socket, recv_queue: SimpleQueue):
 
 
 class Master:
-    def __init__(self):
+    def __init__(self, num_required_worker=None):
         # self.ip = get_ip_addr(__subnet__)
         # if self.ip != master_ip:
         #     print('Wrong master ip!')
@@ -30,13 +30,14 @@ class Master:
         self.server_socket.settimeout(8)
         self.worker_sockets = []
         self.inference_requests = SimpleQueue()
+        self.num_required_worker = num_required_worker
 
         # accept connections from workers
         print(f'Master ip is {self.ip}, recv connections from workers...')
         available_workers = []
         stop_thread = False
         recv_thread = threading.Thread(target=accept_connection,
-                                       args=[self.server_socket, available_workers, lambda: stop_thread])
+                                       args=[self.server_socket, available_workers, self.num_required_worker, lambda: stop_thread])
         recv_thread.start()
         time.sleep(10)
         stop_thread = True

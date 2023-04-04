@@ -1,9 +1,9 @@
 from queue import SimpleQueue
 
-import torch
-import torch.nn.functional as F
-from torch import nn
-from models.googlenet import BasicConv2d
+# import torch
+# import torch.nn.functional as F
+# from torch import nn
+# from models.googlenet import BasicConv2d
 
 # layer = BasicConv2d(16, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
 # last_output = torch.randn((1, 16, 28, 28))
@@ -27,5 +27,32 @@ from models.googlenet import BasicConv2d
 # output1 = F.relu(output1, inplace=True)
 # print(torch.equal(output1, correct_output1))
 
-q = SimpleQueue()
-print(q.get())
+# q = SimpleQueue()
+# print(q.get())
+
+#!/usr/bin/env python
+# encoding: utf-8
+
+import asyncio
+import aiohttp
+
+host = 'https://www.baidu.com'
+# urls_todo = {'/', '/1', '/2', '/3', '/4', '/5', '/6', '/7', '/8', '/9'}
+
+loop = asyncio.get_event_loop()
+
+
+async def fetch(url):
+    async with aiohttp.ClientSession(loop=loop) as session:
+        async with session.get(url) as response:
+            response = await response.read()
+            return response
+
+
+if __name__ == '__main__':
+    import time
+    start = time.time()
+    tasks = [fetch(host) for _ in range(10)]
+    res = loop.run_until_complete(asyncio.gather(*tasks))
+    print(time.time() - start)
+    print(res)

@@ -117,7 +117,8 @@ def connect_to_other(ip_list: list, port: int, socket_list: list, self_ip):
         print(e)
 
 
-def accept_connection(server_socket, recv_list: list, stop):
+def accept_connection(server_socket, recv_list: list, required_num, stop):
+    cnt = 0
     while True:
         if stop():
             break
@@ -125,6 +126,9 @@ def accept_connection(server_socket, recv_list: list, stop):
             conn, addr = server_socket.accept()
             recv_list.append((conn, addr[0]))
             print(f'Recv connection from {addr}')
+            cnt += 1
+            if required_num and cnt == required_num:
+                break
         except timeout:
             continue
         except Exception as e:

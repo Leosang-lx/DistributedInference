@@ -111,7 +111,12 @@ class Worker:
         self.task_queue = SimpleQueue()
         self.execute_queue = SimpleQueue()
 
-    async def start(self):
+    # async def io_task(self, tasks):
+    #     res = await asyncio.gather(*tasks)
+    #     return res
+
+    # async def start(self):
+    def start(self):
         """
         开启多个线程，分别用于接受子任务，接受输入，以及处理子任务
         参控net_analysis.py的仿真
@@ -149,13 +154,19 @@ class Worker:
         accumulated_time = 0
         while True:
             # self.get_available_task()
-
+            # 协程IO并收
             read_ready, _, _ = select.select(self.recv_list, [], [], 0.001)
-            for sock in read_ready:
-                source, data = recv_tensor(sock)
+            recv_tasks = [async_recv_tensor(sock) for sock in read_ready]
+            recvs = loop.run_until_complete(asyncio.gather(*recv_tasks))
+            for source, data in recvs:
                 layer_no, input_range = source
                 print(f'Recv layer {layer_no} output')
                 self.recv_inputs[layer_no].append((input_range, data))
+            # for sock in read_ready:
+            #     source, data = await async_recv_tensor(sock)
+            #     layer_no, input_range = source
+            #     print(f'Recv layer {layer_no} output')
+            #     self.recv_inputs[layer_no].append((input_range, data))  # 慢在同时对多个socket收？
 
             try:
                 from_queue = self.execute_queue.get(timeout=0.01)
@@ -179,6 +190,8 @@ class Worker:
                     except Exception as e:
                         print(f'Error occurs when sending final output to master: {e}')
 
+                # 协程IO并发
+                args = []
                 for f in task.forwarding:
                     if len(f) == 2:  # (to_device, interval)
                         to_device, interval = f
@@ -189,16 +202,31 @@ class Worker:
                     if to_device == self.number:
                         self.recv_inputs[task.layer_num].append(((l, r), output[..., interval[0]:interval[1]]))
                     else:
-                        # try:
-                        #     send_tensor(self.send_sockets[to_device], output[..., interval[0]:interval[1]], task.layer_num, (l, r))
-                        try:
-                            # async_task = asyncio.create_task(async_send_data(self.send_sockets[to_device], (
-                            # (task.layer_num, (l, r)), output[..., interval[0]:interval[1]])))
-                            # await async_task
-                            await async_send_tensor(self.send_sockets[to_device], output[..., interval[0]:interval[1]],
-                                                    task.layer_num, (l, r))
-                        except Exception as e:
-                            print(f'Error occurs when sending output: {e}')
+                        args.append((self.send_sockets[to_device], output[..., interval[0]:interval[1]],
+                                     task.layer_num, (l, r)))
+                send_tasks = [async_send_tensor(*arg) for arg in args]
+                loop.run_until_complete(asyncio.gather(*send_tasks))
+
+                # for f in task.forwarding:
+                #     if len(f) == 2:  # (to_device, interval)
+                #         to_device, interval = f
+                #         l, r = interval
+                #     else:  # len = 3: (to_device, (interval[0] - partition[i], interval[1] - partition[i]), partition[i]))
+                #         to_device, interval, left = f
+                #         l, r = interval[0] + left, interval[1] + left
+                #     if to_device == self.number:
+                #         self.recv_inputs[task.layer_num].append(((l, r), output[..., interval[0]:interval[1]]))
+                #     else:
+                #         # try:
+                #         #     send_tensor(self.send_sockets[to_device], output[..., interval[0]:interval[1]], task.layer_num, (l, r))
+                #         try:
+                #             # async_task = asyncio.create_task(async_send_data(self.send_sockets[to_device], (
+                #             # (task.layer_num, (l, r)), output[..., interval[0]:interval[1]])))
+                #             # await async_task
+                #             await async_send_tensor(self.send_sockets[to_device], output[..., interval[0]:interval[1]],
+                #                                     task.layer_num, (l, r))
+                #         except Exception as e:
+                #             print(f'Error occurs when sending output: {e}')
 
     # def recv_input(self, recv_socket):  # start n_workers-1 thread to recv input from other workers
     #     while True:
@@ -217,7 +245,7 @@ class Worker:
             required_input = input_satisfactory(task.required_input, self.recv_inputs)
             if required_input is None:
                 # print('Not ready')
-                time.sleep(0.1)
+                time.sleep(0.01)
                 continue
                 # return
             else:
@@ -232,4 +260,5 @@ class Worker:
 if __name__ == '__main__':
     worker = Worker()
     loop = asyncio.get_event_loop()
-    asyncio.run(worker.start())
+    worker.start()
+    # asyncio.run(worker.start())

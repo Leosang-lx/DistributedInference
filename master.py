@@ -37,7 +37,7 @@ class Master:
         available_workers = []
         stop_thread = False
         recv_thread = threading.Thread(target=accept_connection,
-                                       args=[self.server_socket, available_workers, self.num_required_worker, lambda: stop_thread])
+                                       args=[self.server_socket, available_workers, lambda: stop_thread])
         recv_thread.start()
         time.sleep(10)
         stop_thread = True

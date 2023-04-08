@@ -117,18 +117,28 @@ def connect_to_other(ip_list: list, port: int, socket_list: list, self_ip):
         print(e)
 
 
-def accept_connection(server_socket, recv_list: list, required_num, stop):
-    cnt = 0
+# def connect_to_other_local(port_list: list, socket_list: list, self_ip):
+#     try:
+#         for i, port in enumerate(port_list):
+#             if worker_ip != self_ip:
+#                 addr = worker_ip, port
+#                 conn = create_connection(addr, timeout=5)
+#                 print(f'Connected to {worker_ip}')
+#                 socket_list.append((conn, addr[0]))
+#     except timeout:
+#         print('Create connections timeout')
+#     except Exception as e:
+#         print(e)
+
+
+def accept_connection(server_socket, recv_list: list, stop):
     while True:
         if stop():
             break
         try:
             conn, addr = server_socket.accept()
-            recv_list.append((conn, addr[0]))
+            recv_list.append((conn, addr[0]))  # only ip
             print(f'Recv connection from {addr}')
-            cnt += 1
-            if required_num and cnt == required_num:
-                break
         except timeout:
             continue
         except Exception as e:
@@ -156,3 +166,17 @@ def load_model(model_name: str, dict_path=None, device='cpu'):
     if dict_path is not None:
         model.load_state_dict(torch.load(dict_path, map_location=device))
     return model
+
+
+def product(num_list):
+    res = 1
+    for i in num_list:
+        res *= i
+    return res
+
+
+def cal_tensor_size(tensor_shape, fix=False):
+    size = product(tensor_shape) * 4
+    if fix:
+        size += 48
+    return size

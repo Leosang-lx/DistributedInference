@@ -3,7 +3,7 @@ from socket import *
 import struct
 from torch import Tensor
 from subprocess import getstatusoutput
-
+from sys import getsizeof
 
 __buffer__ = 65535
 __timeout__ = 10
@@ -30,6 +30,7 @@ def send_data(send_socket: socket, data):
     header = struct.pack(data_header_format, data_size)
     res = send_socket.sendall(header + serialized)
     return res
+
 
 async def async_send_data(send_socket: socket, data):
     serialized = pickle.dumps(data)
@@ -72,7 +73,7 @@ def send_tensor(send_socket: socket, data: Tensor, layer_num: int, data_range: t
 
 
 async def async_send_tensor(send_socket: socket, data: Tensor, layer_num: int, data_range: tuple[int, int]):
-    print(f'send output of layer {layer_num}')
+    print(f'send output from layer {layer_num}')
     serialized = pickle.dumps(data)
     data_size = len(serialized)
     header = struct.pack(__format__, data_size, layer_num, *data_range)

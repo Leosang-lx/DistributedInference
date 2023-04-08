@@ -22,7 +22,7 @@ class ExecutionUnit:
         type = self.operator['type']
         try:
             if type == 'basicConv':
-                return F.relu(F.conv2d(F.pad(x, pad=self.operator['padding']), weight, stride=self.operator['stride'], padding=0), inplace=True)
+                return F.relu(F.conv2d(F.pad(x, pad=self.operator['padding']), weight, stride=self.operator['stride']), inplace=True)
             # elif type == 'conv':  # 目前只有结合化的basicconv，暂不考虑单conv层
             #     return F.conv2d(F.pad(x, pad=self.operator['padding']), weight, stride=self.operator['stride'], padding=self.operator['padding'])
             elif type == 'maxpool':

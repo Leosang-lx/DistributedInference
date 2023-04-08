@@ -10,6 +10,7 @@ from comm import *
 __subnet__ = '192.168.1'
 __port__ = 49999
 master_ip = '192.168.1.101'
+__worker_port__ = 50000
 
 
 class Worker:
@@ -132,11 +133,13 @@ class Worker:
         #     if conn is None:
         #         continue
         #     recv_thread = threading.Thread(target=self.recv_input, args=[conn])
-        #     recv_thread.start()
         #     recv_threads.append(recv_thread)
+        #     recv_thread.start()
+        recv_thread = threading.Thread(target=self.async_recv_input)
+        recv_thread.start()
 
-        input_processing_thread = threading.Thread(target=self.get_available_task)
-        input_processing_thread.start()
+        # input_processing_thread = threading.Thread(target=self.get_available_task)
+        # input_processing_thread.start()
 
         print('Waiting for subtasks and inputs')
         try:
@@ -152,39 +155,62 @@ class Worker:
             print(e)
 
         accumulated_time = 0
+        task = None
         while True:
-            # self.get_available_task()
-            # 协程IO并收
-            read_ready, _, _ = select.select(self.recv_list, [], [], 0.001)
-            recv_tasks = [async_recv_tensor(sock) for sock in read_ready]
-            recvs = loop.run_until_complete(asyncio.gather(*recv_tasks))
-            for source, data in recvs:
-                layer_no, input_range = source
-                print(f'Recv layer {layer_no} output')
-                self.recv_inputs[layer_no].append((input_range, data))
+            # # 协程IO并收
+            # read_ready, _, _ = select.select(self.recv_list, [], [], 0.001)
+            # # recv_tasks = [async_recv_tensor(sock) for sock in read_ready]
+            # # recvs = loop.run_until_complete(asyncio.gather(*recv_tasks))  # 卡住了？
+            # # for source, data in recvs:
+            # #     layer_no, input_range = source
+            # #     print(f'Recv layer {layer_no} output')
+            # #     self.recv_inputs[layer_no].append((input_range, data))
             # for sock in read_ready:
-            #     source, data = await async_recv_tensor(sock)
+            #     source, data = recv_tensor(sock)
             #     layer_no, input_range = source
             #     print(f'Recv layer {layer_no} output')
             #     self.recv_inputs[layer_no].append((input_range, data))  # 慢在同时对多个socket收？
 
-            try:
-                from_queue = self.execute_queue.get(timeout=0.01)
-            except Exception as e:
-                continue
+            finish = False
+            while True:
+                if task is None:
+                    # assert isinstance(available_task, ExecutionUnit)
+                    try:
+                        task = self.task_queue.get(block=False)  # block when queue is empty
+                    except Exception as e:
+                        print('Tasks in queue is empty!')
+                        finish = True
+                        break
+                required_input = input_satisfactory(task.required_input, self.recv_inputs)
+                if required_input is None:
+                    if self.execute_queue.empty():
+                        time.sleep(0.1)
+                        continue
+                    else:
+                        break
+                else:
+                    print(f'Task {task.layer_num} is ready')
+                    args = [required_input]
+                    if task.operator['type'] == 'basicConv':
+                        args.append(self.model.layers[task.layer_num].conv.weight)
+                    self.execute_queue.put((task, args))
+                    task = None
 
-            if from_queue is not None:
-                task, args = from_queue
-                # assert isinstance(task, ExecutionUnit)
-                print(f'Execute task {task.layer_num}')
+            # try:
+            #     available_task = self.execute_queue.get(timeout=0.001)
+            # except Exception as e:
+            #     continue
+
+            while not self.execute_queue.empty():
+                available_task, args = self.execute_queue.get()
+                # available_task, args = available_task
+                print(f'Execute task {available_task.layer_num}')
                 start = time.time()
-                output = task.execute(*args)
+                output = available_task.execute(*args)
                 accumulated_time += time.time() - start
 
-                if task.layer_num == self.model.depth - 1:  # the subtask of last layer
+                if available_task.layer_num == self.model.depth - 1:  # the subtask of last layer
                     try:
-                        # asyncio.create_task(async_send_data(self.master_socket, output))
-                        # await async_send_data(self.master_socket, output)
                         send_data(self.master_socket, output)
                         print(f'Accumulated execution time is {accumulated_time}')
                     except Exception as e:
@@ -192,7 +218,7 @@ class Worker:
 
                 # 协程IO并发
                 args = []
-                for f in task.forwarding:
+                for f in available_task.forwarding:
                     if len(f) == 2:  # (to_device, interval)
                         to_device, interval = f
                         l, r = interval
@@ -200,14 +226,16 @@ class Worker:
                         to_device, interval, left = f
                         l, r = interval[0] + left, interval[1] + left
                     if to_device == self.number:
-                        self.recv_inputs[task.layer_num].append(((l, r), output[..., interval[0]:interval[1]]))
+                        self.recv_inputs[available_task.layer_num].append(((l, r), output[..., interval[0]:interval[1]]))
                     else:
                         args.append((self.send_sockets[to_device], output[..., interval[0]:interval[1]],
-                                     task.layer_num, (l, r)))
+                                     available_task.layer_num, (l, r)))
                 send_tasks = [async_send_tensor(*arg) for arg in args]
-                loop.run_until_complete(asyncio.gather(*send_tasks))
+                loop.run_until_complete(asyncio.gather(*send_tasks))  # 卡在这：一直发，但是对面同样在发还没收，发不完，然后都卡在这
+            if finish:
+                break
 
-                # for f in task.forwarding:
+                # for f in available_task.forwarding:
                 #     if len(f) == 2:  # (to_device, interval)
                 #         to_device, interval = f
                 #         l, r = interval
@@ -215,46 +243,63 @@ class Worker:
                 #         to_device, interval, left = f
                 #         l, r = interval[0] + left, interval[1] + left
                 #     if to_device == self.number:
-                #         self.recv_inputs[task.layer_num].append(((l, r), output[..., interval[0]:interval[1]]))
+                #         self.recv_inputs[available_task.layer_num].append(((l, r), output[..., interval[0]:interval[1]]))
                 #     else:
                 #         # try:
-                #         #     send_tensor(self.send_sockets[to_device], output[..., interval[0]:interval[1]], task.layer_num, (l, r))
+                #         #     send_tensor(self.send_sockets[to_device], output[..., interval[0]:interval[1]], available_task.layer_num, (l, r))
                 #         try:
                 #             # async_task = asyncio.create_task(async_send_data(self.send_sockets[to_device], (
-                #             # (task.layer_num, (l, r)), output[..., interval[0]:interval[1]])))
+                #             # (available_task.layer_num, (l, r)), output[..., interval[0]:interval[1]])))
                 #             # await async_task
                 #             await async_send_tensor(self.send_sockets[to_device], output[..., interval[0]:interval[1]],
-                #                                     task.layer_num, (l, r))
+                #                                     available_task.layer_num, (l, r))
                 #         except Exception as e:
                 #             print(f'Error occurs when sending output: {e}')
 
-    # def recv_input(self, recv_socket):  # start n_workers-1 thread to recv input from other workers
-    #     while True:
-    #         source, data = recv_data(recv_socket)
-    #         layer_no, input_range = source
-    #         print(f'Recv layer {layer_no} output')
-    #         self.recv_inputs[layer_no].append((input_range, data))
-    #         time.sleep(0.1)
-
-    def get_available_task(self):
-        task = None
+    def recv_input(self, recv_socket):  # start n_workers-1 thread to recv input from other workers
         while True:
-            if task is None:
-                # assert isinstance(task, ExecutionUnit)
-                task = self.task_queue.get()  # block when queue is empty
-            required_input = input_satisfactory(task.required_input, self.recv_inputs)
-            if required_input is None:
-                # print('Not ready')
-                time.sleep(0.01)
-                continue
-                # return
-            else:
-                print(f'Task {task.layer_num} is ready')
-                args = [required_input]
-                if task.operator['type'] == 'basicConv':
-                    args.append(self.model.layers[task.layer_num].conv.weight)
-                self.execute_queue.put((task, args))
-                task = None
+            source, data = recv_tensor(recv_socket)
+            layer_no, input_range = source
+            print(f'Recv layer {layer_no} output')
+            self.recv_inputs[layer_no].append((input_range, data))
+            time.sleep(0.001)
+
+    def async_recv_input(self):
+        loop2 = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop2)
+        while True:
+            read_ready, _, _ = select.select(self.recv_list, [], [], 0.001)
+            if len(read_ready) > 0:
+                recv_tasks = [async_recv_tensor(sock) for sock in read_ready]
+                recvs = loop2.run_until_complete(asyncio.gather(*recv_tasks))  # 卡住了？
+                for source, data in recvs:
+                    layer_no, input_range = source
+                    print(f'Recv layer {layer_no} output')
+                    self.recv_inputs[layer_no].append((input_range, data))
+            time.sleep(0.01)
+
+    # def get_available_task(self):
+    #     task = None
+    #     while True:
+    #         if task is None:
+    #             # assert isinstance(task, ExecutionUnit)
+    #             try:
+    #                 task = self.task_queue.get()  # block when queue is empty
+    #             except Exception as e:
+    #                 print('Task queue is empty!')
+    #         required_input = input_satisfactory(task.required_input, self.recv_inputs)
+    #         if required_input is None:
+    #             # print('Not ready')
+    #             time.sleep(0.01)
+    #             continue
+    #             # return
+    #         else:
+    #             print(f'Task {task.layer_num} is ready')
+    #             args = [required_input]
+    #             if task.operator['type'] == 'basicConv':
+    #                 args.append(self.model.layers[task.layer_num].conv.weight)
+    #             self.execute_queue.put((task, args))
+    #             task = None
 
 
 if __name__ == '__main__':

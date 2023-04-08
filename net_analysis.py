@@ -1,4 +1,5 @@
 import queue
+import sys
 import threading
 import time
 import asyncio
@@ -262,6 +263,7 @@ def gen_inputDependency(layer_list, topology_list, output_partitions, last_array
     ids = [list() for _ in range(len(topology_list))]
     for l in topology_list:  # 当前这层
         partition = output_partitions[l]
+
         if layers[l] == 'concat':
             last_division = tuple(len(partitions[last_layer]) - 1 for last_layer in last_array[l])
             required_input = (last_array[l], last_division)
@@ -275,6 +277,11 @@ def gen_inputDependency(layer_list, topology_list, output_partitions, last_array
             for i in range(len(partition) - 1):
                 # get output range
                 output_range = partition[i: i + 2]  # [o_s, o_e)
+
+                # #tricky
+                # if l == i == 0:
+                #     output_range[1] = 151
+
                 layer = layer_list[l]
                 # get corresponding input range
                 if isinstance(layer, (nn.Conv2d, BasicConv2d)):
@@ -426,6 +433,54 @@ def gen_executionUnits(n_device: int, workload_partition, topology_list):
     return device_group
 
 
+def execute(tq: SimpleQueue, ri: list, worker_no: int, result_list: list):
+    # global output
+    print(f'this is worker {worker_no}')
+    while not tq.empty():
+
+        task = tq.get()
+        layer_no = task.layer_num
+        required_input = input_satisfactory(task.required_input, ri)
+        start = time.time()
+        while required_input is None:
+            time.sleep(0.1)
+            required_input = input_satisfactory(task.required_input, ri)
+            if time.time() - start > 3:
+                print(f'layer {layer_no} on device {worker_no} is blocked')
+                return
+        # print(f'input of layer {layer_no} device {worker_no} is ready')
+        layer = layers[layer_no]
+        if isinstance(layer, BasicConv2d):
+            output = task.execute(required_input, layer.conv.weight)
+        # elif isinstance(layer, torch.nn.Conv2d):
+        #     output = task.execute(required_input, layer.weight)
+        else:
+            output = task.execute(required_input)
+
+        partition = partitions[layer_no]
+        if partition == 1:
+            correct = outputs[layer_no]
+        else:
+            correct = outputs[layer_no][..., partition[worker_no]:partition[worker_no + 1]]
+        same = torch.equal(output, correct)
+        print(f'layer {layer_no} on device {worker_no} is {same}')
+
+        if not same:
+            h = 1
+
+        for f in task.forwarding:
+            if len(f) == 2:
+                to_device, interval = f
+                l, r = interval
+            else:
+                to_device, interval, left = f
+                l, r = interval[0] + left, interval[1] + left
+            # left = interval[-1]
+            recv_input[to_device][layer_no].append(((l, r), output[..., interval[0]:interval[1]]))  # 对于该层输出的真实范围以及对应数据
+        # print(f'task of layer {layer_no} device {worker_no} has finished')
+    result_list.append((worker_no, output))
+
+
 if __name__ == '__main__':
     model.input_shape = 3, 600, 600
     layers_dependency = next_to_last(next)
@@ -435,12 +490,13 @@ if __name__ == '__main__':
     # print(f'layers\' topology list: {topology_layers}')
     # print(f'layers\' dependency   : {layers_dependency}')
 
-    n_device = 2
+    n_device = 3
     model.output_shapes = cal_output_shape(model, topology_layers, layers_dependency)
     # for i in range(len(model.output_shapes)):
-        # print(f'{i}: {model.output_shapes[i]}')
+    # print(f'{i}: {model.output_shapes[i]}')
 
     partitions = workload_split(num_device=n_device)
+    # partitions[1][1] = 74
     for i, partition in enumerate(partitions):
         print(f'{i}: {partition}')
     # print(partitions[73:])
@@ -448,8 +504,36 @@ if __name__ == '__main__':
     workload_dependency = gen_inputDependency(layers, topology_layers, partitions, layers_dependency)
 
     gen_forwarding(n_device, workload_dependency, topology_layers, next, partitions)
-    for i in workload_dependency:
-        print(i)
+
+    # workload_dependency[0] = [(([], (0, 304)),
+    #                            {'type': 'basicConv', 'kernel_size': (7, 7), 'stride': (2, 2), 'padding': (3, 0, 3, 3)},
+    #                            [(0, (0, 151), 0)]),
+    #                           (([], (297, 600)),
+    #                            {'type': 'basicConv', 'kernel_size': (7, 7), 'stride': (2, 2), 'padding': (0, 2, 3, 3)},
+    #                            [(1, (0, 150), 150)])]
+    #
+    # workload_dependency[1] = [(([0], (0, 151)),
+    #                            {'type': 'maxpool', 'kernel_size': (3, 3), 'stride': (2, 2), 'padding': (0, 0, 0, 0),
+    #                             'ceil_mode': True}, [(0, (0, 75), 0)]),
+    #                           (([0], (150, 300)),
+    #                            {'type': 'maxpool', 'kernel_size': (3, 3), 'stride': (2, 2), 'padding': (0, 1, 0, 0),
+    #                             'ceil_mode': True}, [(1, (0, 75), 75)])]
+
+    for layer, i in enumerate(workload_dependency):
+        print(f'layer {layer} {i}')
+
+    # forwarding_sizes = [[] for _ in range(n_layers)]
+    # for layer, i in enumerate(workload_dependency):
+    #     for device, eu in enumerate(i):
+    #         fs = []
+    #         for f in eu[2]:
+    #             if f[0] != device:
+    #                 shape = (*model.output_shapes[layer][:-1], f[1][1] - f[1][0])
+    #                 # print(shape)
+    #                 fs.append(cal_tensor_size(shape))
+    #         forwarding_sizes[layer].append(fs)
+    #
+    # print(forwarding_sizes)
 
     execution_units = gen_executionUnits(n_device, workload_dependency, topology_layers)
     # for eu in execution_units:
@@ -470,57 +554,13 @@ if __name__ == '__main__':
     x = torch.randn((1, *model.input_shape))  # test input
     outputs = cal_output(topology_layers, layers_dependency, x)
     # how to store the recv input and how to judge required input is satisfied
+    simulate = True
+    if not simulate:
+        sys.exit(0)
     local = False
     if local:
         for device, ri in enumerate(required_inputs):
             recv_input[device][-1].append(x[..., ri[0]:ri[1]])  # cut from the last dimension of 4D input
-
-        def execute(tq: SimpleQueue, ri: list, worker_no: int, result_list: list):
-            # global output
-            print(f'this is worker {worker_no}')
-            while not tq.empty():
-
-                task = tq.get()
-                layer_no = task.layer_num
-                required_input = input_satisfactory(task.required_input, ri)
-                start = time.time()
-                while required_input is None:
-                    time.sleep(0.1)
-                    required_input = input_satisfactory(task.required_input, ri)
-                    if time.time() - start > 3:
-                        print(f'layer {layer_no} on device {worker_no} is blocked')
-                        return
-                # print(f'input of layer {layer_no} device {worker_no} is ready')
-                layer = layers[layer_no]
-                if isinstance(layer, BasicConv2d):
-                    output = task.execute(required_input, layer.conv.weight)
-                # elif isinstance(layer, torch.nn.Conv2d):
-                #     output = task.execute(required_input, layer.weight)
-                else:
-                    output = task.execute(required_input)
-
-                partition = partitions[layer_no]
-                if partition == 1:
-                    correct = outputs[layer_no]
-                else:
-                    correct = outputs[layer_no][..., partition[worker_no]:partition[worker_no + 1]]
-                same = torch.equal(output, correct)
-                print(f'layer {layer_no} on device {worker_no} is {same}')
-
-                if not same:
-                    h = 1
-
-                for f in task.forwarding:
-                    if len(f) == 2:
-                        to_device, interval = f
-                        l, r = interval
-                    else:
-                        to_device, interval, left = f
-                        l, r = interval[0] + left, interval[1] + left
-                    # left = interval[-1]
-                    recv_input[to_device][layer_no].append(((l, r), output[..., interval[0]:interval[1]]))  # 对于该层输出的真实范围以及对应数据
-                # print(f'task of layer {layer_no} device {worker_no} has finished')
-            result_list.append((worker_no, output))
 
         results = []
         threads = []
@@ -539,6 +579,7 @@ if __name__ == '__main__':
         # print(torch.equal(right_output, result))
     else:  # online testing
         from master import Master
+
         m = Master(num_required_worker=n_device)
         m.start()
         time.sleep(2)
@@ -558,7 +599,8 @@ if __name__ == '__main__':
 
         start = time.time()  # worker接受所有tasks需要花很多时间
         try:
-            send_tasks = [async_send_data(m.worker_sockets[device], first_input) for device, first_input in enumerate(first_inputs)]
+            send_tasks = [async_send_data(m.worker_sockets[device], first_input) for device, first_input in
+                          enumerate(first_inputs)]
             loop.run_until_complete(asyncio.gather(*send_tasks))
         except Exception as e:
             print(f'Error occurred when send required input to workers:\n{e}')
@@ -577,5 +619,3 @@ if __name__ == '__main__':
             print('Recv results time out!')
         except Exception as e:
             print(e)
-
-

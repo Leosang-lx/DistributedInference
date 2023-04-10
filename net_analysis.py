@@ -504,19 +504,19 @@ if __name__ == '__main__':
 
     gen_forwarding(n_device, workload_dependency, topology_layers, next, partitions)
 
-    workload_dependency[0] = [(([], (0, 304)),
-                               {'type': 'basicConv', 'kernel_size': (7, 7), 'stride': (2, 2), 'padding': (3, 0, 3, 3)},
-                               [(0, (0, 151), 0)]),
-                              (([], (297, 600)),
-                               {'type': 'basicConv', 'kernel_size': (7, 7), 'stride': (2, 2), 'padding': (0, 2, 3, 3)},
-                               [(1, (0, 150), 150)])]
-
-    workload_dependency[1] = [(([0], (0, 151)),
-                               {'type': 'maxpool', 'kernel_size': (3, 3), 'stride': (2, 2), 'padding': (0, 0, 0, 0),
-                                'ceil_mode': True}, [(0, (0, 75), 0)]),
-                              (([0], (150, 300)),
-                               {'type': 'maxpool', 'kernel_size': (3, 3), 'stride': (2, 2), 'padding': (0, 1, 0, 0),
-                                'ceil_mode': True}, [(1, (0, 75), 75)])]
+    # workload_dependency[0] = [(([], (0, 304)),
+    #                            {'type': 'basicConv', 'kernel_size': (7, 7), 'stride': (2, 2), 'padding': (3, 0, 3, 3)},
+    #                            [(0, (0, 151), 0)]),
+    #                           (([], (297, 600)),
+    #                            {'type': 'basicConv', 'kernel_size': (7, 7), 'stride': (2, 2), 'padding': (0, 2, 3, 3)},
+    #                            [(1, (0, 150), 150)])]
+    #
+    # workload_dependency[1] = [(([0], (0, 151)),
+    #                            {'type': 'maxpool', 'kernel_size': (3, 3), 'stride': (2, 2), 'padding': (0, 0, 0, 0),
+    #                             'ceil_mode': True}, [(0, (0, 75), 0)]),
+    #                           (([0], (150, 300)),
+    #                            {'type': 'maxpool', 'kernel_size': (3, 3), 'stride': (2, 2), 'padding': (0, 1, 0, 0),
+    #                             'ceil_mode': True}, [(1, (0, 75), 75)])]
 
     for layer, i in enumerate(workload_dependency):
         print(f'layer {layer} {i}')

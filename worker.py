@@ -128,6 +128,7 @@ class Worker:
         self.model = load_model('googlenet')
         self.recv_inputs = [[] for _ in range(self.model.depth)]
 
+        # start recv threads, recv results as soon as possible
         recv_threads = []
         for conn in self.recv_sockets:
             if conn is None:
@@ -172,9 +173,9 @@ class Worker:
             #     self.recv_inputs[layer_no].append((input_range, data))  # 慢在同时对多个socket收？
 
             finish = False
+            # collect available tasks and put in execute queue
             while True:
                 if task is None:
-                    # assert isinstance(available_task, ExecutionUnit)
                     try:
                         task = self.task_queue.get(block=False)  # block when queue is empty
                     except Exception as e:
@@ -184,7 +185,7 @@ class Worker:
                 required_input = input_satisfactory(task.required_input, self.recv_inputs)
                 if required_input is None:
                     if self.execute_queue.empty():
-                        time.sleep(0.1)
+                        time.sleep(0.01)
                         continue
                     else:
                         break
@@ -196,11 +197,7 @@ class Worker:
                     self.execute_queue.put((task, args))
                     task = None
 
-            # try:
-            #     available_task = self.execute_queue.get(timeout=0.001)
-            # except Exception as e:
-            #     continue
-
+            # execute available tasks
             while not self.execute_queue.empty():
                 available_task, args = self.execute_queue.get()
                 # available_task, args = available_task
@@ -232,9 +229,9 @@ class Worker:
                         args.append((self.send_sockets[to_device], f_data,
                                      available_task.layer_num, (l, r)))
                 send_tasks = [async_send_tensor(*arg) for arg in args]
-                loop.run_until_complete(asyncio.gather(*send_tasks))  # 卡在这：一直发，但是对面同样在发还没收，发不完，然后都卡在这
+                loop.run_until_complete(asyncio.gather(*send_tasks))
             if finish:
-                break
+                return
 
                 # for f in available_task.forwarding:
                 #     if len(f) == 2:  # (to_device, interval)
@@ -269,7 +266,7 @@ class Worker:
         loop2 = asyncio.new_event_loop()
         asyncio.set_event_loop(loop2)
         while True:
-            read_ready, _, _ = select.select(self.recv_list, [], [], 0.001)
+            read_ready, _, _ = select.select(self.recv_list, [], [], 0.1)
             if len(read_ready) > 0:
                 recv_tasks = [async_recv_tensor(sock) for sock in read_ready]
                 recvs = loop2.run_until_complete(asyncio.gather(*recv_tasks))  # 卡住了？
@@ -277,7 +274,7 @@ class Worker:
                     layer_no, input_range = source
                     print(f'Recv layer {layer_no} output')
                     self.recv_inputs[layer_no].append((input_range, data))
-            time.sleep(0.01)
+            time.sleep(0.001)
 
     # def get_available_task(self):
     #     task = None

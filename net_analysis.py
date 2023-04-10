@@ -504,6 +504,7 @@ if __name__ == '__main__':
 
     gen_forwarding(n_device, workload_dependency, topology_layers, next, partitions)
 
+    # useless
     # workload_dependency[0] = [(([], (0, 304)),
     #                            {'type': 'basicConv', 'kernel_size': (7, 7), 'stride': (2, 2), 'padding': (3, 0, 3, 3)},
     #                            [(0, (0, 151), 0)]),

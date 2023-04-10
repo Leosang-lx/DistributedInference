@@ -82,7 +82,12 @@ async def async_send_tensor(send_socket: socket, data: Tensor, layer_num: int, d
 
 
 def recv_tensor(recv_socket: socket):
-    data = recv_socket.recv(__size__)
+    data = b''
+    header_size = __size__
+    while header_size:
+        recv = recv_socket.recv(header_size)
+        data += recv
+        header_size -= len(recv)
     header = struct.unpack(__format__, data)
     data_size = header[0]
     data = b''
@@ -94,7 +99,12 @@ def recv_tensor(recv_socket: socket):
 
 
 async def async_recv_tensor(recv_socket: socket):
-    data = recv_socket.recv(__size__)
+    data = b''
+    header_size = __size__
+    while header_size:
+        recv = recv_socket.recv(header_size)
+        data += recv
+        header_size -= len(recv)
     header = struct.unpack(__format__, data)
     data_size = header[0]
     data = b''

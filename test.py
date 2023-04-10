@@ -14,17 +14,16 @@ def product(num_list):
     return res
 
 
-shape = [1, 3, 224, 224]
-print(len(pickle.dumps(shape)))
+shape = [1, 64, 300, 150]
 a = torch.randn(shape)
-b = torch.Tensor(a.storage())
-print(b.shape)
-c = sys.getsizeof(a.storage())
-d = 4*product(shape)
-e = len(pickle.dumps(a.storage()))
-print(e - d)
 
-print(a.storage().pickle_storage_type())
+print(4 * product(shape))
+print(sys.getsizeof(a.storage()))
+print(len(pickle.dumps(a)) / 1024)
+b = a[..., -1:].clone().detach()
+print(b.shape)
+print(sys.getsizeof(b.storage()))
+print(len(pickle.dumps(b)) / 1024)
 
 # layer = BasicConv2d(16, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
 # last_output = torch.randn((1, 16, 28, 28))

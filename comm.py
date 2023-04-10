@@ -73,9 +73,9 @@ def send_tensor(send_socket: socket, data: Tensor, layer_num: int, data_range: t
 
 
 async def async_send_tensor(send_socket: socket, data: Tensor, layer_num: int, data_range: tuple[int, int]):
-    print(f'send output from layer {layer_num}')
     serialized = pickle.dumps(data)
     data_size = len(serialized)
+    print(f'send output from layer {layer_num} of size {data_size/1024}KB')
     header = struct.pack(__format__, data_size, layer_num, *data_range)
     res = send_socket.sendall(header + serialized)
     return res

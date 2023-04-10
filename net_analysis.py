@@ -4,7 +4,6 @@ import threading
 import time
 import asyncio
 import numpy as np
-import torch
 from torch import nn
 from models.googlenet import BasicConv2d, GoogLeNet
 from ExecutionUnit import ExecutionUnit
@@ -490,7 +489,7 @@ if __name__ == '__main__':
     # print(f'layers\' topology list: {topology_layers}')
     # print(f'layers\' dependency   : {layers_dependency}')
 
-    n_device = 3
+    n_device = 2
     model.output_shapes = cal_output_shape(model, topology_layers, layers_dependency)
     # for i in range(len(model.output_shapes)):
     # print(f'{i}: {model.output_shapes[i]}')
@@ -505,19 +504,19 @@ if __name__ == '__main__':
 
     gen_forwarding(n_device, workload_dependency, topology_layers, next, partitions)
 
-    # workload_dependency[0] = [(([], (0, 304)),
-    #                            {'type': 'basicConv', 'kernel_size': (7, 7), 'stride': (2, 2), 'padding': (3, 0, 3, 3)},
-    #                            [(0, (0, 151), 0)]),
-    #                           (([], (297, 600)),
-    #                            {'type': 'basicConv', 'kernel_size': (7, 7), 'stride': (2, 2), 'padding': (0, 2, 3, 3)},
-    #                            [(1, (0, 150), 150)])]
-    #
-    # workload_dependency[1] = [(([0], (0, 151)),
-    #                            {'type': 'maxpool', 'kernel_size': (3, 3), 'stride': (2, 2), 'padding': (0, 0, 0, 0),
-    #                             'ceil_mode': True}, [(0, (0, 75), 0)]),
-    #                           (([0], (150, 300)),
-    #                            {'type': 'maxpool', 'kernel_size': (3, 3), 'stride': (2, 2), 'padding': (0, 1, 0, 0),
-    #                             'ceil_mode': True}, [(1, (0, 75), 75)])]
+    workload_dependency[0] = [(([], (0, 304)),
+                               {'type': 'basicConv', 'kernel_size': (7, 7), 'stride': (2, 2), 'padding': (3, 0, 3, 3)},
+                               [(0, (0, 151), 0)]),
+                              (([], (297, 600)),
+                               {'type': 'basicConv', 'kernel_size': (7, 7), 'stride': (2, 2), 'padding': (0, 2, 3, 3)},
+                               [(1, (0, 150), 150)])]
+
+    workload_dependency[1] = [(([0], (0, 151)),
+                               {'type': 'maxpool', 'kernel_size': (3, 3), 'stride': (2, 2), 'padding': (0, 0, 0, 0),
+                                'ceil_mode': True}, [(0, (0, 75), 0)]),
+                              (([0], (150, 300)),
+                               {'type': 'maxpool', 'kernel_size': (3, 3), 'stride': (2, 2), 'padding': (0, 1, 0, 0),
+                                'ceil_mode': True}, [(1, (0, 75), 75)])]
 
     for layer, i in enumerate(workload_dependency):
         print(f'layer {layer} {i}')
@@ -583,7 +582,7 @@ if __name__ == '__main__':
         m = Master(num_required_worker=n_device)
         m.start()
         time.sleep(2)
-        first_inputs = [x[..., ri[0]:ri[1]] for ri in required_inputs]
+        first_inputs = [x[..., ri[0]:ri[1]].clone().detach() for ri in required_inputs]
         loop = asyncio.get_event_loop()
         print('Send subtasks and input to workers...')
         try:

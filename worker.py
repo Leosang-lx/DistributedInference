@@ -128,15 +128,15 @@ class Worker:
         self.model = load_model('googlenet')
         self.recv_inputs = [[] for _ in range(self.model.depth)]
 
-        # recv_threads = []
-        # for conn in self.recv_sockets:
-        #     if conn is None:
-        #         continue
-        #     recv_thread = threading.Thread(target=self.recv_input, args=[conn])
-        #     recv_threads.append(recv_thread)
-        #     recv_thread.start()
-        recv_thread = threading.Thread(target=self.async_recv_input)
-        recv_thread.start()
+        recv_threads = []
+        for conn in self.recv_sockets:
+            if conn is None:
+                continue
+            recv_thread = threading.Thread(target=self.recv_input, args=[conn])
+            recv_threads.append(recv_thread)
+            recv_thread.start()
+        # recv_thread = threading.Thread(target=self.async_recv_input)
+        # recv_thread.start()
 
         # input_processing_thread = threading.Thread(target=self.get_available_task)
         # input_processing_thread.start()
@@ -225,10 +225,11 @@ class Worker:
                     else:  # len = 3: (to_device, (interval[0] - partition[i], interval[1] - partition[i]), partition[i]))
                         to_device, interval, left = f
                         l, r = interval[0] + left, interval[1] + left
+                    f_data = output[..., interval[0]:interval[1]].clone().detach()  # should create new tensor instead of using reference to old original tensor
                     if to_device == self.number:
-                        self.recv_inputs[available_task.layer_num].append(((l, r), output[..., interval[0]:interval[1]]))
+                        self.recv_inputs[available_task.layer_num].append(((l, r), f_data))
                     else:
-                        args.append((self.send_sockets[to_device], output[..., interval[0]:interval[1]],
+                        args.append((self.send_sockets[to_device], f_data,
                                      available_task.layer_num, (l, r)))
                 send_tasks = [async_send_tensor(*arg) for arg in args]
                 loop.run_until_complete(asyncio.gather(*send_tasks))  # 卡在这：一直发，但是对面同样在发还没收，发不完，然后都卡在这

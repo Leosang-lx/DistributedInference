@@ -9,6 +9,7 @@ from models.googlenet import BasicConv2d, GoogLeNet
 from ExecutionUnit import ExecutionUnit
 from util import *
 from queue import SimpleQueue
+from paint import show_time_intervals
 
 # take GoogLeNet as DAG example
 model = GoogLeNet()
@@ -481,7 +482,7 @@ def execute(tq: SimpleQueue, ri: list, worker_no: int, result_list: list):
 
 
 if __name__ == '__main__':
-    model.input_shape = 3, 600, 600
+    model.input_shape = 3, 224, 224
     layers_dependency = next_to_last(next)
     n_layers = len(layers_dependency)
     topology_layers = topology_DAG(next, layers_dependency)
@@ -489,7 +490,7 @@ if __name__ == '__main__':
     # print(f'layers\' topology list: {topology_layers}')
     # print(f'layers\' dependency   : {layers_dependency}')
 
-    n_device = 2
+    n_device = 4
     model.output_shapes = cal_output_shape(model, topology_layers, layers_dependency)
     # for i in range(len(model.output_shapes)):
     # print(f'{i}: {model.output_shapes[i]}')
@@ -557,7 +558,7 @@ if __name__ == '__main__':
     simulate = True
     if not simulate:
         sys.exit(0)
-    local = False
+    local = True
     if local:
         for device, ri in enumerate(required_inputs):
             recv_input[device][-1].append(x[..., ri[0]:ri[1]])  # cut from the last dimension of 4D input
@@ -591,6 +592,7 @@ if __name__ == '__main__':
             loop.run_until_complete(asyncio.gather(*send_tasks))
         except Exception as e:
             print(f'Error occurred when send subtasks:\n{e}')
+        time.sleep(1)
         # for device, eus in enumerate(execution_units):
         #     try:
         #         send_data(m.worker_sockets[device], eus)
@@ -618,4 +620,65 @@ if __name__ == '__main__':
         except timeout:
             print('Recv results time out!')
         except Exception as e:
-            print(e)
+            print(f'Error occurred when recv results:\n{e}')
+
+        # 接受workers生成的计算区间：并尝试绘图
+        recvs = None
+        accum_time = None
+        try:
+            recv_tasks = [async_recv_data(sock) for sock in m.worker_sockets]
+            recvs = loop.run_until_complete(asyncio.gather(*recv_tasks))  # execute_intervals of workers
+            accum_time = [np.asarray(intervals) for intervals in recvs]
+            show_time_intervals(recvs)
+
+        except timeout:
+            print('Recv intervals time out!')
+        except Exception as e:
+            print(f'Error occurred when recv intervals:\n{e}')
+
+
+### replay the execution process:
+        print("----------------------Process Replay----------------------")
+        execution_workers = []
+        gap_workers = []
+        sums_workers = []
+        for w in range(n_device):
+            recv = recvs[w]
+            num_tasks = len(execution_units[w])
+            execution_times = []
+            gap = []
+            for t in range(num_tasks):
+                execution_times.append(recv[t * 2])
+                if t * 2 + 1 >= len(recv):
+                    break
+                gap.append(recv[t * 2 + 1])
+            execution_times = np.asarray(execution_times)
+            sums_workers.append(execution_times.sum())
+            execution_idx10 = np.argsort(execution_times)[::-1][:10]
+            gap = np.asarray(gap)
+            gap_idx10 = np.argsort(gap)[::-1][:10]
+            # print(execution_idx10)
+            task_ids = [execution_units[w][i].layer_num for i in execution_idx10]
+            execution_workers.append(list(zip(task_ids, execution_times[execution_idx10])))
+            task_ids = [execution_units[w][i].layer_num for i in gap_idx10]
+            gap_workers.append(list(zip(task_ids, gap[gap_idx10])))
+
+        for w, exe_sum in enumerate(sums_workers):
+            print(f'worker {w+1} execution sum: {exe_sum}')
+        # show the most time-consuming execution and gap intervals in the process
+        print("The most time-consuming tasks with layer number")
+        for w, execution_worker in enumerate(execution_workers):
+            print(f'{w+1}: {execution_worker}')
+        print("The most time-consuming gap with last layer number")
+        for w, gap_worker in enumerate(gap_workers):
+            print(f'{w+1}: {gap_worker}')
+
+        print('Records of all subtasks')
+        for w, intervals in enumerate(accum_time):
+            records = []
+            layers_id = [t.layer_num for t in execution_units[w]]
+            intervals -= intervals[0]
+            for i, layer in enumerate(layers_id):
+                records.append((layer, intervals[i * 2]))
+                records.append((layer, intervals[i * 2 + 1]))
+            print(f'{w}: {records}')

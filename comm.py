@@ -52,6 +52,18 @@ def recv_data(recv_socket: socket):
     return pickle.loads(data)
 
 
+async def async_recv_data(recv_socket: socket):
+    msg = recv_socket.recv(data_header_size)
+    header = struct.unpack(data_header_format, msg)
+    data_size = header[0]
+    data = b''
+    while data_size:
+        recv = recv_socket.recv(min(4096, data_size))
+        data += recv
+        data_size -= len(recv)
+    return pickle.loads(data)
+
+
 __format__ = 'IHHH'  # header: (data size, layer num, left range, right range]
 __size__ = struct.calcsize(__format__)
 

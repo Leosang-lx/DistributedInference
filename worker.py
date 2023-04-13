@@ -120,7 +120,7 @@ class Worker:
     def start(self):
         """
         开启多个线程，分别用于接受子任务，接受输入，以及处理子任务
-        参控net_analysis.py的仿真
+        参考net_analysis.py的仿真
         :return:None
         """
 
@@ -141,10 +141,11 @@ class Worker:
 
         # input_processing_thread = threading.Thread(target=self.get_available_task)
         # input_processing_thread.start()
-
         print('Waiting for subtasks and inputs')
+        # len_subtasks = 0
         try:
             subtasks = recv_data(self.master_socket)
+            # len_subtasks = len(subtasks)
             for t in subtasks:
                 self.task_queue.put(t)
             print('Recv subtasks')
@@ -155,7 +156,8 @@ class Worker:
         except Exception as e:
             print(e)
 
-        accumulated_time = 0
+        # accumulated_time = 0
+        execute_intervals = []
         task = None
         while True:
             # # 协程IO并收
@@ -171,7 +173,6 @@ class Worker:
             #     layer_no, input_range = source
             #     print(f'Recv layer {layer_no} output')
             #     self.recv_inputs[layer_no].append((input_range, data))  # 慢在同时对多个socket收？
-
             finish = False
             # collect available tasks and put in execute queue
             while True:
@@ -199,17 +200,20 @@ class Worker:
 
             # execute available tasks
             while not self.execute_queue.empty():
+                start = time.time()
+                execute_intervals.append(start)
                 available_task, args = self.execute_queue.get()
                 # available_task, args = available_task
                 print(f'Execute task {available_task.layer_num}')
-                start = time.time()
                 output = available_task.execute(*args)
-                accumulated_time += time.time() - start
+                # accumulated_time += time.time() - start
+                end = time.time()
+                execute_intervals.append(end)
 
                 if available_task.layer_num == self.model.depth - 1:  # the subtask of last layer
                     try:
                         send_data(self.master_socket, output)
-                        print(f'Accumulated execution time is {accumulated_time}')
+                        # print(f'Accumulated execution time is {accumulated_time}')
                     except Exception as e:
                         print(f'Error occurs when sending final output to master: {e}')
 
@@ -231,6 +235,11 @@ class Worker:
                 send_tasks = [async_send_tensor(*arg) for arg in args]
                 loop.run_until_complete(asyncio.gather(*send_tasks))
             if finish:
+                print(f'Accumulated execution time is {execute_intervals[-1] - execute_intervals[0]}s')
+                try:
+                    send_data(self.master_socket, execute_intervals)
+                except Exception as e:
+                    print(f'Error occurred when sending intervals: \n{e}')
                 return
 
                 # for f in available_task.forwarding:

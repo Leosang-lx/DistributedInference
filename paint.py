@@ -42,3 +42,26 @@ def show_time_intervals(data):
     # omit redundant legend
     ax.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(0, 1), loc='lower left')
     plt.show()
+
+
+def show_transmission_size(sizes: list):
+    n_device = len(sizes)
+    plt.figure(figsize=(12, 6))
+    for i in range(n_device):
+        plt.subplot(n_device, 1, i + 1)
+        xs = list(range(len(sizes[i])))
+        ys = np.asarray(sizes[i])
+        ys = ys / 1024  # unit: KB
+        plt.plot(xs, ys)
+        plt.title(f'worker{i+1}')
+    plt.suptitle('Transmission size')
+    plt.tight_layout()
+    plt.show()
+    for i in range(n_device):
+        xs = list(range(len(sizes[i])))
+        ys = np.asarray(sizes[i])
+        ys = ys / 1024  # unit: KB
+        plt.plot(xs, ys, label=f'worker{i+1}')
+    plt.legend()
+    plt.suptitle('Transmission size')
+    plt.show()

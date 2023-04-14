@@ -9,7 +9,7 @@ from models.googlenet import BasicConv2d, GoogLeNet
 from ExecutionUnit import ExecutionUnit
 from util import *
 from queue import SimpleQueue
-from paint import show_time_intervals
+from paint import *
 
 # take GoogLeNet as DAG example
 model = GoogLeNet()
@@ -400,19 +400,16 @@ def gen_forwarding(n_device: int, input_dependency, topology_list, next_layers, 
                         input_dependency[l][0][2].append((to_device, interval))
         elif len(nexts) == 1 and layers[nexts[0]] == 'concat':  # next layer is concat
             for i in range(len(partition) - 1):
-                # input_dependency[l][i][2].append((0, 1))  # 表示把所有输出转给设备0
                 input_dependency[l][i][2].append((0, (0, partition[i + 1] - partition[i]), partition[i]))
         else:  # no concat layer between this layer and next layer
-            # forwarding = [[] for _ in range(n_device)]  # 未去重的forwarding
             for nl in nexts:
                 for i in range(len(partition) - 1):
-                    forwarding = [[] for _ in range(n_device)]
+                    forwarding = [[] for _ in range(n_device)]  # 未去重的forwarding
                     for j, eu in enumerate(input_dependency[nl]):
                         _, input_range = eu[0]
                         overlap = get_intersection((partition[i], partition[i + 1]), input_range)
                         if overlap is not None:
                             forwarding[j].append(overlap)
-                            # input_dependency[nl][i][2].append((j, overlap))
                     for to_device, f in enumerate(forwarding):  # d为设备号
                         if len(f) > 0:  # 按照转发对应的设备号去重
                             for interval in get_set_union(f):
@@ -490,7 +487,7 @@ if __name__ == '__main__':
     # print(f'layers\' topology list: {topology_layers}')
     # print(f'layers\' dependency   : {layers_dependency}')
 
-    n_device = 4
+    n_device = 3
     model.output_shapes = cal_output_shape(model, topology_layers, layers_dependency)
     # for i in range(len(model.output_shapes)):
     # print(f'{i}: {model.output_shapes[i]}')
@@ -504,21 +501,6 @@ if __name__ == '__main__':
     workload_dependency = gen_inputDependency(layers, topology_layers, partitions, layers_dependency)
 
     gen_forwarding(n_device, workload_dependency, topology_layers, next, partitions)
-
-    # useless
-    # workload_dependency[0] = [(([], (0, 304)),
-    #                            {'type': 'basicConv', 'kernel_size': (7, 7), 'stride': (2, 2), 'padding': (3, 0, 3, 3)},
-    #                            [(0, (0, 151), 0)]),
-    #                           (([], (297, 600)),
-    #                            {'type': 'basicConv', 'kernel_size': (7, 7), 'stride': (2, 2), 'padding': (0, 2, 3, 3)},
-    #                            [(1, (0, 150), 150)])]
-    #
-    # workload_dependency[1] = [(([0], (0, 151)),
-    #                            {'type': 'maxpool', 'kernel_size': (3, 3), 'stride': (2, 2), 'padding': (0, 0, 0, 0),
-    #                             'ceil_mode': True}, [(0, (0, 75), 0)]),
-    #                           (([0], (150, 300)),
-    #                            {'type': 'maxpool', 'kernel_size': (3, 3), 'stride': (2, 2), 'padding': (0, 1, 0, 0),
-    #                             'ceil_mode': True}, [(1, (0, 75), 75)])]
 
     for layer, i in enumerate(workload_dependency):
         print(f'layer {layer} {i}')
@@ -540,8 +522,23 @@ if __name__ == '__main__':
     # for eu in execution_units:
     #     print(len(eu))
 
-    # 在本地模拟DNN拆分子任务执行判断拆分是否正确
+    # cal the minimal transmission size of each worker
+    forward_workers = [[] for _ in range(n_device)]  # unit: byte
+    for w, eus in enumerate(execution_units):
+        for eu in eus:
+            assert isinstance(eu, ExecutionUnit)
+            l = eu.layer_num
+            f_size = 0
+            for f in eu.forwarding:
+                if f[0] != w:
+                    shape = *model.output_shapes[l][:-1], f[1][1] - f[1][0]
+                    # f_size = max(f_size, cal_tensor_size(shape))
+                    f_size += cal_tensor_size(shape)  # 多向发送是应该算发送的最大值还是发送总量？
+            forward_workers[w].append(f_size)
+    show_transmission_size(forward_workers)
 
+
+    # 在本地模拟DNN拆分子任务执行判断拆分是否正确
     task_queue = [SimpleQueue() for _ in range(n_device)]  # store all tasks
     # execute_queue = [SimpleQueue() for _ in range(n_device)]  # store input-ready tasks
     recv_input = [[[] for _ in range(n_layers + 1)] for _ in range(n_device)]  # item: (input, from_layer)
@@ -555,7 +552,7 @@ if __name__ == '__main__':
     x = torch.randn((1, *model.input_shape))  # test input
     outputs = cal_output(topology_layers, layers_dependency, x)
     # how to store the recv input and how to judge required input is satisfied
-    simulate = True
+    simulate = False
     if not simulate:
         sys.exit(0)
     local = True
@@ -587,18 +584,15 @@ if __name__ == '__main__':
         first_inputs = [x[..., ri[0]:ri[1]].clone().detach() for ri in required_inputs]
         loop = asyncio.get_event_loop()
         print('Send subtasks and input to workers...')
+        # send subtasks
         try:
             send_tasks = [async_send_data(m.worker_sockets[device], eus) for device, eus in enumerate(execution_units)]
             loop.run_until_complete(asyncio.gather(*send_tasks))
         except Exception as e:
             print(f'Error occurred when send subtasks:\n{e}')
         time.sleep(1)
-        # for device, eus in enumerate(execution_units):
-        #     try:
-        #         send_data(m.worker_sockets[device], eus)
-        #     except Exception as e:
-        #         print(f'Error occurred when send subtasks:\n{e}')
 
+        # send initial inputs
         start = time.time()  # worker接受所有tasks需要花很多时间
         try:
             send_tasks = [async_send_data(m.worker_sockets[device], first_input) for device, first_input in
@@ -606,11 +600,6 @@ if __name__ == '__main__':
             loop.run_until_complete(asyncio.gather(*send_tasks))
         except Exception as e:
             print(f'Error occurred when send required input to workers:\n{e}')
-        # for device, first_input in enumerate(first_inputs):
-        #     try:
-        #         send_data(m.worker_sockets[device], first_input)
-        #     except Exception as e:
-        #         print(f'Error occurred when send subtasks: {e}')
 
         try:
             data = recv_data(m.worker_sockets[0])

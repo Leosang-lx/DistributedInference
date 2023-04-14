@@ -175,7 +175,7 @@ def product(num_list):
 
 
 def cal_tensor_size(tensor_shape, fix=False):
-    size = product(tensor_shape) * 4
+    size = product(tensor_shape) << 2
     if fix:
         size += 48
     return size

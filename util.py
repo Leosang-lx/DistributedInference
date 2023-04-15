@@ -95,6 +95,57 @@ def input_satisfactory(required_input: tuple, recv_list: list):  # 判断require
         return None
 
 
+def input_satisfactory2(required_input: tuple, recv_list: list):  # 判断required_input是否满足
+    """
+    judge whether the required input of sub-task is satisfied with recv inputs
+    :param required_input: a tuple (dependent layers in list, required input range)
+    :param recv_list: recv input stored by layers
+    :return: return the required concat input else None
+    """
+    dependent_layers, input_range = required_input
+    if len(dependent_layers) == 0:  # input of the first layer
+        if len(recv_list[-1]) == 0:
+            return None
+        return recv_list[-1][0]
+    # print(required_input)
+    # if len(dependent_layers) > 1:  # concat output from execution units of several layers
+    collects = []
+    if len(dependent_layers) != len(input_range):
+        for last_last in dependent_layers:
+            c, d = input_range
+            outputs = recv_list[last_last]
+            outputs.sort(key=lambda x: x[0][0])
+            collect = []
+            for interval, data in outputs:
+                a, b = interval
+                if a <= c < b:
+                    if d <= b:
+                        collect.append(data[..., c - a:d - a])
+                        c = d
+                        break
+                    else:
+                        collect.append(data[..., c - a:])
+                    c = b
+            if c == d:
+                collects.append(collect)
+            else:
+                return None
+        if len(dependent_layers) == 1:
+            return torch.cat(collects[0], -1)
+        return torch.cat([torch.cat(concat, -1) for concat in collects], 1)
+
+    else:  # concat layer
+        for i, dl in enumerate(dependent_layers):
+            outputs = recv_list[dl]
+            if len(outputs) == input_range[i]:
+                outputs.sort(key=lambda x: x[0][0])
+                outputs = [data[1] for data in outputs]
+                collects.append(torch.cat(outputs, -1))  # item in recv_list is (global range, data)
+            else:
+                return None
+        return collects
+
+
 def get_ip_addr(__subnet__: str):  # get ip by the prefix of __subnet__
     status, ip_addr = getstatusoutput(f'ifconfig | grep "{__subnet__}" | awk \'{{print $2}}\'')
     if status == 0:

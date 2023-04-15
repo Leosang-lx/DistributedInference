@@ -5,14 +5,15 @@ import threading
 import time
 from queue import SimpleQueue
 
+import torch
 from torch import nn
 
 from ExecutionUnit import ExecutionUnit
 from models.googlenet import BasicConv2d
 from paint import *
 from util import *
+from net_analysis import next_to_last, topology_DAG, cal_output_shape, cal_output, workload_split, output_input
 
-# take GoogLeNet as DAG example
 model = GoogLeNet()
 layers = [
     model.conv1,  # 0
@@ -70,210 +71,79 @@ layers = [
     # model.avgpool,  # 70  avgpool with output_shape (1, 1) means kernel_size = input_shape
     # model.dropout,  # 71
     # model.fc,  # 72
+    'concat',  # 70
+    'concat',  # 71
+    'concat',  # 72
     'concat',  # 73
     'concat',  # 74
     'concat',  # 75
     'concat',  # 76
     'concat',  # 77
     'concat',  # 78
-    'concat',  # 79
-    'concat',  # 80
-    'concat',  # 81
 ]
-# DAG of GoogLeNet
-# next_array = [1, 2, 3, 4, [5, 6, 8, 10], 73, 7, 73, 9, 73, 11, 73, 74, 14, 74, 16, 74, 18, 74, [20, 21, 23, 25], 75, 22, 75,
-#         24, 75, 26, 75, 76, 29, 76, 31, 76, 33,
-#         76, 77, 36, 77, 38, 77, 40, 77, 78, 43, 78, 45, 78, 47, 78, 79, 50, 79, 52, 79, 54, 79, [56, 57, 59, 61], 80,
-#         58, 80, 60, 80, 62, 80, 81, 65, 81,
-#         67, 81, 69, 81, 71, 72, [], [12, 13, 15, 17], 19, [27, 28, 30, 32], [34, 35, 37, 39], [41, 42, 44, 46],  # whole network
-#         [48, 49, 51, 53], 55, [63, 64, 66, 68], 70]
-next = [1, 2, 3, 4, [5, 6, 8, 10], 70, 7, 70, 9, 70, 11, 70, 71, 14, 71, 16, 71, 18, 71, [20, 21, 23, 25], 72, 22, 72,
+
+last_concat = 78
+
+# next_array = [1, 2, 3, 4, [5, 6, 8, 10], [12, 13, 15, 17], 7, [12, 13, 15, 17], 9, [12, 13, 15, 17], 11, [12, 13, 15, 17], 19,
+#               14, 19, 16, 19, 18, 19, [20, 21, 23, 25], [27, 28, 30, 32], 22, [27, 28, 30, 32], 24, [27, 28, 30, 32], 26,
+#               [27, 28, 30, 32], [34, 35, 37, 39], 29, [34, 35, 37, 39], 31, [34, 35, 37, 39], 33, [34, 35, 37, 39],
+#               [41, 42, 44, 46], 36, [41, 42, 44, 46], 38, [41, 42, 44, 46], 40, [41, 42, 44, 46], [48, 49, 51, 53], 43,
+#               [48, 49, 51, 53], 45, [48, 49, 51, 53], 47, [48, 49, 51, 53], 55, 50, 55, 52, 55, 54, 55, [56, 57, 59, 61],
+#               [63, 64, 66, 68], 58, [63, 64, 66, 68], 60, [63, 64, 66, 68], 62, [63, 64, 66, 68], 70, 65, 70,
+#               67, 70, 69, 70, []]
+
+next_array = [1, 2, 3, 4, [5, 6, 8, 10], 70, 7, 70, 9, 70, 11, 70, 71, 14, 71, 16, 71, 18, 71, [20, 21, 23, 25], 72, 22, 72,
         24, 72, 26, 72, 73, 29, 73, 31, 73, 33,
         73, 74, 36, 74, 38, 74, 40, 74, 75, 43, 75, 45, 75, 47, 75, 76, 50, 76, 52, 76, 54, 76, [56, 57, 59, 61], 77,
         58, 77, 60, 77, 62, 77, 78, 65, 78,
         67, 78, 69, 78, [12, 13, 15, 17], 19, [27, 28, 30, 32], [34, 35, 37, 39], [41, 42, 44, 46],
-        # remove the last_array several layers like adaptive average pool and fully connected layers
         [48, 49, 51, 53], 55, [63, 64, 66, 68], []]
 
-for i in range(len(next)):  # 将next数组内的单个元素处理为长度为1的列表
-    if not isinstance(next[i], list):
-        next[i] = [next[i]]
-
-
+# print(next_array[63])
 # print(len(next_array))
+# sys.exit(0)
 
+for i in range(len(next_array)):  # 将next数组内的单个元素处理为长度为1的列表
+    if not isinstance(next_array[i], list):
+        next_array[i] = [next_array[i]]
 
-def next_to_last(next):  # 将next数组转化为last数组，即last数组
-    total = len(next)
-    last = [[] for _ in range(total)]
-    # last_array[0].append(-1)  # -1 represents the original input
-    for i, nexts in enumerate(next):
-        for l in nexts:
-            last[l].append(i)
-    return last
-
-
-# print(len(layers))
-# layers_dependency = next_to_last(next_array)
-
-
-def topology_DAG(next_array, last_array):  # transfer the DAG network to topology list, starts from 0, bfs
-    total = len(next_array)
-    in_num = np.zeros(total)
-    for i in range(total):
-        in_num[i] = len(last_array[i])
-    q = queue.Queue()
-    q.put(0)
-    ans = []
-    while not q.empty():
-        ele = q.get()
-        ans.append(ele)
-        if isinstance(next_array[ele], list):
-            for i in next_array[ele]:
-                in_num[i] -= 1
-                if in_num[i] == 0:
-                    q.put(i)
-        else:
-            in_num[next_array[ele]] -= 1
-            if in_num[next_array[ele]] == 0:
-                q.put(next_array[ele])
-    return ans
-
-
-# average distribution
-# output features range of layer
-
-
-def cal_output_shape(net, topology_list, last_array):
-    n_layers = len(topology_list)
-    output_shapes = [[] for _ in range(n_layers)]
-    mark = np.zeros(n_layers)
-    for lth in topology_list:
-        mark[lth] = 1
-        if layers[lth] == 'concat':
-            inputs = []
-            for last in last_array[lth]:
-                inputs.append(torch.randn(output_shapes[last]))
-            output = torch.cat(inputs, 1)
-
-        else:
-            if lth == 0:
-                input_shape = 1, *net.input_shape
-            else:
-                input_shape = output_shapes[last_array[lth][0]]
-            x = torch.randn(input_shape)
-            if isinstance(layers[lth], nn.Linear):
-                x = torch.flatten(x, 1)
-            output = layers[lth](x)
-        output_shapes[lth] = output.shape
-
-    return output_shapes
-
-
-def cal_output(topology_list, last_array, x):
-    n_layers = len(topology_list)
-    outputs = [None for _ in range(n_layers)]
-    mark = np.zeros(n_layers)
-    for lth in topology_list:
-        if lth == 0:
-            outputs[0] = layers[0](x)
-            continue
-        mark[lth] = 1
-        if layers[lth] == 'concat':
-            inputs = [outputs[i] for i in last_array[lth]]
-            output = torch.cat(inputs, 1)
-        else:
-            assert len(last_array[lth]) == 1
-            last_layer = last_array[lth][0]
-            output = layers[lth](outputs[last_layer])
-        outputs[lth] = output
-    return outputs
-
-
-# layers_output_shapes = cal_output_shape(model, topology_layers, layers_dependency)
-
-
-# def cal_inputFromOutput(output_shapes, last_layers):
-#     n_layers = len(output_shapes)
-#     input_shapes = [[] for _ in range(n_layers)]
-#     for nl in topology_layers:
-#         if nl == 0:
-#             input_shape = [1, 3, 224, 224]
-#         else:
-#             lasts = last_layers[nl]
-#             if len(lasts) == 1:
-#                 last_array = lasts[0]
-#                 input_shape = output_shapes[last_array]
-#             else:  # have over 1 last_array layers
-#                 input_shape = []
-#                 for last_array in lasts:
-#                     input_shape.append(output_shapes[last_array])
-#         input_shapes[nl] = input_shape
-#     return input_shapes
+# last_array = next_to_last(next_array)
+# print(last_array)
 #
+# topology_list = topology_DAG(next_array, last_array)
 #
-# # compute the layers' output shape and store in model
-# model.input_shapes = cal_inputFromOutput(layers_output_shapes, layers_dependency)
+# model.output_shapes = cal_output_shape(model, topology_list, last_array)
+#
+# n_device = 2
+# output_partitions = workload_split(model.output_shapes, n_device)
 
 
-# print(model.output_shapes)
-
-
-# partitioning dimension: -1 # 假设从最后一维开始切
-def workload_split(output_shapes, num_device):  # temporarily average
-    partitions = []
-    for i, shape in enumerate(output_shapes):
-        if layers[i] == 'concat':
-            partitions.append(1)
-        else:
-            length = shape[-1]
-            partition = [0 for _ in range(num_device + 1)]
-            partition[-1] = length
-            average = round(length / num_device)
-            for i in range(1, num_device):
-                partition[i] = average * i
-            partitions.append(partition)
-    return partitions
-
-
-# from output range to input range
-def output_input(output_range: tuple, layer_config=None) -> tuple:
-    o_s, o_e = output_range
-    layer_type = layer_config['type']
-    if layer_type == 'relu':  # most activation layers
-        return output_range
-    elif layer_type == 'upsample':
-        scale_factor = layer_type['scale_factor']
-        return round(o_s / scale_factor), round(o_e / scale_factor)
-    elif layer_type in ('conv', 'basicConv', 'maxpool'):
-        kernel_size, stride, padding = layer_config['kernel_size'], layer_config['stride'], layer_config['padding']
-        if padding != 0:
-            padding = padding[1]
-        return o_s * stride[1] - padding, (o_e - 1) * stride[1] + kernel_size[1] - padding
-    else:
-        print('Unknown layer type')
-
-
-# generate execution units
 def gen_inputDependency(layer_list, topology_list, output_partitions, last_array):
-    # required input: from which layer, input range(in the -1 dimension )
-    ids = [list() for _ in range(len(topology_list))]
-    for l in topology_list:  # 当前这层
-        partition = output_partitions[l]
+    not_concat = len(layer_list) - layer_list.count('concat')  # the number of layers that is not concat
+    ids = [list() for _ in range(not_concat)]
+    for l in topology_list:
 
-        if layers[l] == 'concat':
-            last_division = tuple(len(partitions[last_layer]) - 1 for last_layer in last_array[l])
-            required_input = (last_array[l], last_division)
-            layer_config = {'type': 'concat'}
-            ids[l].append((required_input, layer_config, []))
+        partitions = output_partitions[l]
+        if layer_list[l] == 'concat':
+            if l == last_concat:  # 如果这个concat层后面没有了，那就concat
+                last_division_num = tuple(len(output_partitions[last_layer]) - 1 for last_layer in last_array[l])
+                required_input = (last_array[l], last_division_num)
+                layer_config = {'type': 'concat'}
+                ids.append([(required_input, layer_config, [])])
+            else:
+                continue
         else:
+            last = last_array[l]
+            if len(last) == 1 and layer_list[last[0]] == 'concat':
+                last = last_array[last[0]]  # if last layer is concat
+
             if l == 0:
                 H = model.input_shape[-1]
             else:
-                H = model.output_shapes[last_array[l][0]][-1]
-            for i in range(len(partition) - 1):
+                H = model.output_shapes[last[0]][-1]
+            for i in range(len(partitions) - 1):
                 # get output range
-                output_range = partition[i: i + 2]  # [o_s, o_e)
+                output_range = partitions[i:i+2]  # [o_s, o_e)
                 layer = layer_list[l]
                 # get corresponding input range
                 if isinstance(layer, (nn.Conv2d, BasicConv2d)):
@@ -282,7 +152,7 @@ def gen_inputDependency(layer_list, topology_list, output_partitions, last_array
                         layer = layer.conv
                         type = 'basicConv'
                     layer_config = {'type': type, 'kernel_size': layer.kernel_size, 'stride': layer.stride,
-                                    'padding': layer.padding}
+                                        'padding': layer.padding}
                     i_s, i_e = input_range = output_input(output_range, layer_config)  # [i_s, i_e)
                     if layer.padding == 0:
                         padding = (0, 0, 0, 0)
@@ -297,11 +167,11 @@ def gen_inputDependency(layer_list, topology_list, output_partitions, last_array
                             i_e = H
                         else:
                             bottom_padding = 0
-                        padding = (upper_padding, bottom_padding, *layer.padding)
-                        input_range = (i_s, i_e)
+                        padding = (upper_padding, bottom_padding, *layer.padding)  # consider the padding of two dimension is same
+                        input_range = i_s, i_e
                     layer_config['padding'] = padding
 
-                elif isinstance(layer, nn.MaxPool2d):  # padding = 0 for most maxpool layers
+                elif isinstance(layer, nn.MaxPool2d):
                     layer_config = {'type': 'maxpool', 'kernel_size': layer.kernel_size, 'stride': layer.stride,
                                     'padding': layer.padding, 'ceil_mode': layer.ceil_mode}
                     i_s, i_e = input_range = output_input(output_range, layer_config)  # [i_s, i_e)
@@ -322,7 +192,7 @@ def gen_inputDependency(layer_list, topology_list, output_partitions, last_array
                     else:
                         bottom_padding = 0
                     padding = (upper_padding, bottom_padding, *padding)
-                    input_range = (i_s, i_e)
+                    input_range = i_s, i_e
                     layer_config['padding'] = padding
 
                 elif isinstance(layer, nn.Upsample):
@@ -335,89 +205,138 @@ def gen_inputDependency(layer_list, topology_list, output_partitions, last_array
                     input_range = None
                     layer_config = None
 
-                required_input = (last_array[l], input_range)
+                required_input = last, input_range
                 ids[l].append((required_input, layer_config, []))
 
     return ids
 
 
-# for w in workload_dependency:
-#     print(w)
-
-
-# def gen_forwarding(input_dependency: list, topology_list: list, dependency_list: list):
-#     for nl in topology_list:  # this layer
-#         lasts = dependency_list[nl]
-#         if len(lasts) == 1:  # only depends on one layer, can be the next_array layer of concat
-#             for i, n in enumerate(input_dependency[nl]):  # execution units of this layers
-#                 last_layer, input_range = n[0]
-#                 last_layer = last_layer[0]
-#                 last_partition = partitions[last_layer]  # partition of last_array layer's output
-#                 if last_partition == 1:  # last_array layer is concat, has whole input
-#                     input_dependency[last_layer][0][2].append((i, input_range))
-#                 else:
-#                     # formation = []  # the formation of layer's input
-#                     for j in range(len(last_partition) - 1):
-#                         left_max = max(last_partition[j], input_range[0])
-#                         right_min = min(last_partition[j + 1], input_range[1])
-#                         if left_max < right_min:  # overlap
-#                             overlap = (left_max, right_min)
-#                             input_dependency[last_layer][j][2].append((i, overlap))
-#                             # formation.append((n, overlap))
-#         else:  # concat layer
-#             for last_array in lasts:
-#                 last_partition = partitions[last_array]
-#                 for i in range(len(last_partition) - 1):
-#                     input_dependency[last_array][i][2].append((0, (partitions[last_array][i], partitions[last_array][i + 1])))
-
-
-def gen_forwarding(n_device: int, input_dependency, topology_list, next_layers, output_partitions):
-    for l in topology_list:  # layer nl
-        nexts = next_layers[l]  # next_array layers
-        partition = output_partitions[l]
-        if len(nexts) == 0:  # output of final layer should send back to master
+def gen_forwarding(layer_list, n_device: input, input_dependency, topology_list, next_array, output_partitions):
+    for l in topology_list:
+        partitions = output_partitions[l]
+        nexts = next_array[l]
+        if layer_list[l] == 'concat':
             continue
-            # input_dependency[l][0][2].append(1)
-        if layers[l] == 'concat':  # layer l is concat
-            forwarding = [[] for _ in range(n_device)]
-            for nl in nexts:
-                for i, eu in enumerate(input_dependency[nl]):
-                    input_range = eu[0][1]
-                    forwarding[i].append(input_range)
-            for to_device, f in enumerate(forwarding):  # d为设备号
-                if len(f) > 0:  # 按照转发对应的设备号去重
-                    for interval in get_set_union(f):
-                        input_dependency[l][0][2].append((to_device, interval))
-        elif len(nexts) == 1 and layers[nexts[0]] == 'concat':  # next_array layer is concat
-            for i in range(len(partition) - 1):
-                input_dependency[l][i][2].append((0, (0, partition[i + 1] - partition[i]), partition[i]))
-        else:  # no concat layer between this layer and next_array layer
-            for nl in nexts:
-                for i in range(len(partition) - 1):
-                    forwarding = [[] for _ in range(n_device)]  # 未去重的forwarding
-                    for j, eu in enumerate(input_dependency[nl]):
+            # if l == last_concat:
+            #     forwarding = [[] for _ in range(n_device)]
+            #     for nl in next_array:
+            #         for i, eu in enumerate(input_dependency[nl]):
+            #             input_range = eu[0][1]
+            #             forwarding[i].append(input_range)
+            #     for to_device, f in enumerate(forwarding):  # d为设备号
+            #         if len(f) > 0:  # 按照转发对应的设备号去重
+            #             for interval in get_set_union(f):
+            #                 input_dependency[l][0][2].append((to_device, interval))
+            # else:
+            #     continue
+
+        else:
+
+            if len(nexts) == 1 and layer_list[nexts[0]] == 'concat':
+                if nexts[0] == 78:
+                    for i in range(len(partitions) - 1):
+                        input_dependency[l][i][2].append((0, (0, partitions[i + 1] - partitions[i]), partitions[i]))
+                    continue
+                else:
+                    nexts = next_array[nexts[0]]  # concat the output from nexts before executing this task
+
+            for lw in range(len(partitions) - 1):
+                forwarding = [[] for _ in range(n_device)]
+                for nl in nexts:
+                    for nw, eu in enumerate(input_dependency[nl]):
                         _, input_range = eu[0]
-                        overlap = get_intersection((partition[i], partition[i + 1]), input_range)
+                        overlap = get_intersection((partitions[lw], partitions[lw + 1]), input_range)
                         if overlap is not None:
-                            forwarding[j].append(overlap)
-                    for to_device, f in enumerate(forwarding):  # d: device_id
-                        if len(f) > 0:  # 按照转发对应的设备号去重
-                            for interval in get_set_union(f):
-                                input_dependency[l][i][2].append(
-                                    (to_device, (interval[0] - partition[i], interval[1] - partition[i]), partition[i]))
-
-
-# for eu in workload_dependency:
-#     print(eu)
+                            forwarding[nw].append(overlap)
+                for to_device, f in enumerate(forwarding):
+                    if len(f) > 0:
+                        for interval in get_set_union(f):
+                            input_dependency[l][lw][2].append((to_device, (interval[0] - partitions[lw], interval[1] - partitions[lw]), partitions[lw]))
 
 
 def gen_executionUnits(n_device: int, workload_partition, topology_list):
     device_group = [[] for _ in range(n_device)]
-    for l in topology_list:  # current layer
-        for i, eu in enumerate(workload_partition[l]):
+    for l, eus in enumerate(workload_partition):  # current layer
+        for i, eu in enumerate(eus):
             device_group[i].append(
                 ExecutionUnit(required_input=eu[0], operator=eu[1], forwarding=eu[2], layer_num=l, device_num=i))
     return device_group
+
+
+def input_satisfactory2(required_input: tuple, recv_list: list):  # 判断required_input是否满足
+    """
+    judge whether the required input of sub-task is satisfied with recv inputs
+    :param required_input: a tuple (dependent layers in list, required input range)
+    :param recv_list: recv input stored by layers
+    :return: return the required concat input else None
+    """
+    dependent_layers, input_range = required_input
+    if len(dependent_layers) == 0:  # input of the first layer
+        if len(recv_list[-1]) == 0:
+            return None
+        return recv_list[-1][0]
+    # print(required_input)
+    # if len(dependent_layers) > 1:  # concat output from execution units of several layers
+    collects = []
+    if len(dependent_layers) != len(input_range):
+        for last_last in dependent_layers:
+            c, d = input_range
+            outputs = recv_list[last_last]
+            outputs.sort(key=lambda x: x[0][0])
+            collect = []
+            for interval, data in outputs:
+                a, b = interval
+                if a <= c < b:
+                    if d <= b:
+                        collect.append(data[..., c - a:d - a])
+                        c = d
+                        break
+                    else:
+                        collect.append(data[..., c - a:])
+                    c = b
+            if c == d:
+                collects.append(collect)
+            else:
+                return None
+        if len(dependent_layers) == 1:
+            return torch.cat(collects[0], -1)
+        return torch.cat([torch.cat(concat, -1) for concat in collects], 1)
+
+    else:  # concat layer
+        for i, dl in enumerate(dependent_layers):
+            outputs = recv_list[dl]
+            if len(outputs) == input_range[i]:
+                outputs.sort(key=lambda x: x[0][0])
+                outputs = [data[1] for data in outputs]
+                collects.append(torch.cat(outputs, -1))  # item in recv_list is (global range, data)
+            else:
+                return None
+        return collects
+
+    # else:  # collect paddings len(dependent_layers) == 1 or == 0
+    #     c, d = input_range
+    #     if len(dependent_layers) == 0:  # input of the first layer
+    #         if len(recv_list[-1]) == 0:
+    #             return None
+    #         return recv_list[-1][0]
+    #     else:
+    #         input_list = recv_list[dependent_layers[0]]
+    #     input_list.sort(key=lambda item: item[0][0])
+    #     collect = []
+    #     for interval, data in input_list:
+    #         a, b = interval
+    #         if a <= c < b:
+    #             if d <= b:
+    #                 collect.append(data[..., c - a:d - a])
+    #                 c = d
+    #                 break
+    #             else:
+    #                 collect.append(data[..., c - a:])
+    #             c = b
+    #     if c == d:
+    #         # print(torch.concat(collect, dim=-1).shape)
+    #         return torch.concat(collect, dim=-1)
+    #     return None
 
 
 def execute(tq: SimpleQueue, ri: list, worker_no: int, result_list: list):
@@ -427,11 +346,13 @@ def execute(tq: SimpleQueue, ri: list, worker_no: int, result_list: list):
 
         task = tq.get()
         layer_no = task.layer_num
-        required_input = input_satisfactory(task.required_input, ri)
+        if layer_no == 78:
+            h = 1
+        required_input = input_satisfactory2(task.required_input, ri)
         start = time.time()
         while required_input is None:
             time.sleep(0.1)
-            required_input = input_satisfactory(task.required_input, ri)
+            required_input = input_satisfactory2(task.required_input, ri)
             if time.time() - start > 3:
                 print(f'layer {layer_no} on device {worker_no} is blocked')
                 return
@@ -450,6 +371,7 @@ def execute(tq: SimpleQueue, ri: list, worker_no: int, result_list: list):
         else:
             correct = outputs[layer_no][..., partition[worker_no]:partition[worker_no + 1]]
         same = torch.equal(output, correct)
+        # same_shape = output.shape == correct.shape
         print(f'layer {layer_no} on device {worker_no} is {same}')
 
         for f in task.forwarding:
@@ -461,23 +383,19 @@ def execute(tq: SimpleQueue, ri: list, worker_no: int, result_list: list):
                 l, r = interval[0] + left, interval[1] + left
             # left = interval[-1]
             recv_input[to_device][layer_no].append(((l, r), output[..., interval[0]:interval[1]]))  # 对于该层输出的真实范围以及对应数据
-        # print(f'task of layer {layer_no} device {worker_no} has finished')
-    result_list.append((worker_no, output))
+        if len(task.forwarding) == 0:
+            result_list.append((worker_no, output))
+    # result_list.append((worker_no, output))
 
 
 if __name__ == '__main__':
     model.input_shape = 3, 224, 224
-    layers_dependency = next_to_last(next)
+    layers_dependency = next_to_last(next_array)
     n_layers = len(layers_dependency)
-    topology_layers = topology_DAG(next, layers_dependency)
+    topology_layers = topology_DAG(next_array, layers_dependency)
 
-    # print(f'layers\' topology list: {topology_layers}')
-    # print(f'layers\' dependency   : {layers_dependency}')
-
-    n_device = 3
+    n_device = 2
     model.output_shapes = cal_output_shape(model, topology_layers, layers_dependency)
-    # for i in range(len(model.output_shapes)):
-    # print(f'{i}: {model.output_shapes[i]}')
 
     partitions = workload_split(model.output_shapes, n_device)
     # partitions[1][1] = 74
@@ -487,7 +405,7 @@ if __name__ == '__main__':
 
     workload_dependency = gen_inputDependency(layers, topology_layers, partitions, layers_dependency)
 
-    gen_forwarding(n_device, workload_dependency, topology_layers, next, partitions)
+    gen_forwarding(layers, n_device, workload_dependency, topology_layers, next_array, partitions)
 
     for layer, i in enumerate(workload_dependency):
         print(f'layer {layer} {i}')
@@ -506,8 +424,6 @@ if __name__ == '__main__':
     # print(forwarding_sizes)
 
     execution_units = gen_executionUnits(n_device, workload_dependency, topology_layers)
-    # for eu in execution_units:
-    #     print(len(eu))
 
     # cal the minimal transmission size of each worker
     forward_workers = [[] for _ in range(n_device)]  # unit: byte
@@ -534,6 +450,8 @@ if __name__ == '__main__':
         for eu in nl:
             task_queue[device].put(eu)
 
+
+
     required_inputs = [execution_units[i][0].required_input[1] for i in range(n_device)]
     print(required_inputs)
     x = torch.randn((1, *model.input_shape))  # test input
@@ -542,7 +460,7 @@ if __name__ == '__main__':
     simulate = True
     if not simulate:
         sys.exit(0)
-    local = True
+    local = False
     if local:
         for device, ri in enumerate(required_inputs):
             recv_input[device][-1].append(x[..., ri[0]:ri[1]])  # cut from the last_array dimension of 4D input
@@ -590,6 +508,7 @@ if __name__ == '__main__':
 
         try:
             data = recv_data(m.worker_sockets[0])
+            # print(data)
             consumption = time.time() - start
             print(torch.allclose(outputs[-1], data))
             print(f'Recv final result in {consumption}s')
@@ -658,3 +577,6 @@ if __name__ == '__main__':
                 records.append((layer, intervals[i * 2]))
                 records.append((layer, intervals[i * 2 + 1]))
             print(f'{w}: {records}')
+
+
+

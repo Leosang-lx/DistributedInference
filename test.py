@@ -3,6 +3,8 @@ import sys
 from queue import SimpleQueue
 
 import torch
+
+
 # import torch.nn.functional as F
 # from torch import nn
 # from models.googlenet import BasicConv2d
@@ -24,6 +26,7 @@ b = a[..., -1:].clone().detach()
 print(b.shape)
 print(sys.getsizeof(b.storage()))
 print(len(pickle.dumps(b)) / 1024)
+
 
 # layer = BasicConv2d(16, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
 # last_output = torch.randn((1, 16, 28, 28))
@@ -74,3 +77,11 @@ print(len(pickle.dumps(b)) / 1024)
 #     res = loop.run_until_complete(asyncio.gather(*tasks))
 #     print(time.time() - start)
 #     print(res)
+
+def get_required_strings(keyword: str, strings: list[str]):
+    ans = []
+    for s in strings:
+        if keyword in s:
+            ans.append(s)
+    return ans
+

@@ -153,7 +153,7 @@ class GoogLeNet(nn.Module):
                      [56, 57, 59, 61], 77,
                      58, 77, 60, 77, 62, 77, 78, 65, 78,
                      67, 78, 69, 78, [12, 13, 15, 17], 19, [27, 28, 30, 32], [34, 35, 37, 39], [41, 42, 44, 46],
-                     # remove the last several layers like adaptive average pool and fully connected layers
+                     # remove the last_array several layers like adaptive average pool and fully connected layers
                      [48, 49, 51, 53], 55, [63, 64, 66, 68], []]
         self.depth = len(self.next)
         # Initialize neural network weights

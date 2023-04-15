@@ -183,7 +183,7 @@ class Worker:
                         print('Tasks in queue is empty!')
                         finish = True
                         break
-                required_input = input_satisfactory(task.required_input, self.recv_inputs)
+                required_input = input_satisfactory2(task.required_input, self.recv_inputs)
                 if required_input is None:
                     if self.execute_queue.empty():
                         time.sleep(0.01)
@@ -210,36 +210,39 @@ class Worker:
                 end = time.time()
                 execute_intervals.append(end)
 
-                if available_task.layer_num == self.model.depth - 1:  # the subtask of last layer
-                    try:
-                        send_data(self.master_socket, output)
-                        # print(f'Accumulated execution time is {accumulated_time}')
-                    except Exception as e:
-                        print(f'Error occurs when sending final output to master: {e}')
+                # if available_task.layer_num == self.model.depth - 1:  # the subtask of last_array layer
+                #     try:
+                #         send_data(self.master_socket, output)
+                #         # print(f'Accumulated execution time is {accumulated_time}')
+                #     except Exception as e:
+                #         print(f'Error occurs when sending final output to master: {e}')
 
                 # 协程IO并发
-                args = []
-                for f in available_task.forwarding:
-                    if len(f) == 2:  # (to_device, interval)
-                        to_device, interval = f
-                        l, r = interval
-                    else:  # len = 3: (to_device, (interval[0] - partition[i], interval[1] - partition[i]), partition[i]))
-                        to_device, interval, left = f
-                        l, r = interval[0] + left, interval[1] + left
-                    f_data = output[..., interval[0]:interval[1]].clone().detach()  # should create new tensor instead of using reference to old original tensor
-                    if to_device == self.number:
-                        self.recv_inputs[available_task.layer_num].append(((l, r), f_data))
-                    else:
-                        args.append((self.send_sockets[to_device], f_data,
-                                     available_task.layer_num, (l, r)))
-                send_tasks = [async_send_tensor(*arg) for arg in args]
-                loop.run_until_complete(asyncio.gather(*send_tasks))
+                if len(available_task.forwarding) > 0:
+                    args = []
+                    for f in available_task.forwarding:
+                        if len(f) == 2:  # (to_device, interval)
+                            to_device, interval = f
+                            l, r = interval
+                        else:  # len = 3: (to_device, (interval[0] - partition[i], interval[1] - partition[i]), partition[i]))
+                            to_device, interval, left = f
+                            l, r = interval[0] + left, interval[1] + left
+                        f_data = output[..., interval[0]:interval[1]].clone().detach()  # should create new tensor instead of using reference to old original tensor
+                        if to_device == self.number:
+                            self.recv_inputs[available_task.layer_num].append(((l, r), f_data))
+                        else:
+                            args.append((self.send_sockets[to_device], f_data,
+                                         available_task.layer_num, (l, r)))
+                    send_tasks = [async_send_tensor(*arg) for arg in args]
+                    loop.run_until_complete(asyncio.gather(*send_tasks))
+                else:
+                    try:
+                        send_data(self.master_socket, output)
+                    except Exception as e:
+                        print(f'Error occurred when sending intervals: \n{e}')
             if finish:
                 print(f'Accumulated execution time is {execute_intervals[-1] - execute_intervals[0]}s')
-                try:
-                    send_data(self.master_socket, execute_intervals)
-                except Exception as e:
-                    print(f'Error occurred when sending intervals: \n{e}')
+                send_data(self.master_socket, execute_intervals)
                 return
 
                 # for f in available_task.forwarding:

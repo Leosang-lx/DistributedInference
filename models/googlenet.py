@@ -171,6 +171,50 @@ class GoogLeNet(nn.Module):
 
         return out
 
+    def forward_feature(self, x: Tensor):
+        x = self._transform_input(x)
+
+        out = self.conv1(x)
+        out = self.maxpool1(out)
+        out = self.conv2(out)
+        out = self.conv3(out)
+        out = self.maxpool2(out)
+
+        out = self.inception3a(out)
+        out = self.inception3b(out)
+        out = self.maxpool3(out)
+        out = self.inception4a(out)
+        aux1: Optional[Tensor] = None
+        if self.aux1 is not None:
+            if self.training:
+                aux1 = self.aux1(out)
+
+        out = self.inception4b(out)
+        out = self.inception4c(out)
+        out = self.inception4d(out)
+        aux2: Optional[Tensor] = None
+        if self.aux2 is not None:
+            if self.training:
+                aux2 = self.aux2(out)
+
+        out = self.inception4e(out)
+        out = self.maxpool4(out)
+        out = self.inception5a(out)
+        out = self.inception5b(out)
+
+        return aux1, aux2, out
+
+    def forward_classifier(self, aux1, aux2, x: Tensor):
+        out = self.avgpool(x)
+        out = torch.flatten(out, 1)
+        out = self.dropout(out)
+        aux3 = self.fc(out)
+
+        if torch.jit.is_scripting():
+            return GoogLeNetOutputs(aux3, aux2, aux1)
+        else:
+            return self.eager_outputs(aux3, aux2, aux1)
+
     def _transform_input(self, x: Tensor) -> Tensor:
         if self.transform_input:
             x_ch0 = torch.unsqueeze(x[:, 0], 1) * (0.229 / 0.5) + (0.485 - 0.5) / 0.5

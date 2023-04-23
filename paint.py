@@ -26,8 +26,8 @@ def show_time_intervals(data):
     starts = np.asarray([0.0 for _ in range(len(labels))])
 
     for i in range(max_len):
-        c = color[i%2]
-        label = colname[i%2]
+        c = color[i % 2]
+        label = colname[i % 2]
         values = []
         for worker in data:
             if i < len(worker):

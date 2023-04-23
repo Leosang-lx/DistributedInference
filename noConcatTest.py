@@ -1,111 +1,100 @@
 import asyncio
-import queue
 import sys
 import threading
+import torch.nn as nn
 import time
-from queue import SimpleQueue
-
-import torch
-from torch import nn
-
 from ExecutionUnit import ExecutionUnit
 from models.googlenet import BasicConv2d
 from paint import *
 from util import *
-from net_analysis import next_to_last, topology_DAG, cal_output_shape, cal_output, workload_split, output_input
+from net_analysis import next_to_last, topology_DAG, cal_output_shape, workload_split, output_input
 
-model = GoogLeNet()
-layers = [
-    model.conv1,  # 0
-    model.maxpool1,  # 1
-    model.conv2,  # 2
-    model.conv3,  # 3
-    model.maxpool2,  # 4
-    model.inception3a.branch1,  # 5
-    *model.inception3a.branch2,  # 67
-    *model.inception3a.branch3,  # 89
-    *model.inception3a.branch4,  # 1011
-    # concat 70
-    model.inception3b.branch1,  # 12
-    *model.inception3b.branch2,  # 1314
-    *model.inception3b.branch3,  # 1516
-    *model.inception3b.branch4,  # 1718
-
-    model.maxpool3,  # 19
-    model.inception4a.branch1,  # 20
-    *model.inception4a.branch2,  # 2122
-    *model.inception4a.branch3,  # 2324
-    *model.inception4a.branch4,  # 2526
-
-    model.inception4b.branch1,  # 27
-    *model.inception4b.branch2,  # 2829
-    *model.inception4b.branch3,  # 3031
-    *model.inception4b.branch4,  # 3233
-
-    model.inception4c.branch1,  # 34
-    *model.inception4c.branch2,  # 3536
-    *model.inception4c.branch3,  # 3738
-    *model.inception4c.branch4,  # 3940
-
-    model.inception4d.branch1,  # 41
-    *model.inception4d.branch2,  # 4243
-    *model.inception4d.branch3,  # 4445
-    *model.inception4d.branch4,  # 4647
-
-    model.inception4e.branch1,  # 48
-    *model.inception4e.branch2,  # 4950
-    *model.inception4e.branch3,  # 5152
-    *model.inception4e.branch4,  # 5354
-
-    model.maxpool4,  # 55
-    model.inception5a.branch1,  # 56
-    *model.inception5a.branch2,  # 5758
-    *model.inception5a.branch3,  # 5960
-    *model.inception5a.branch4,  # 6162
-
-    model.inception5b.branch1,  # 63
-    *model.inception5b.branch2,  # 6465
-    *model.inception5b.branch3,  # 6667
-    *model.inception5b.branch4,  # 6869
-
-    # model.avgpool,  # 70  avgpool with output_shape (1, 1) means kernel_size = input_shape
-    # model.dropout,  # 71
-    # model.fc,  # 72
-    'concat',  # 70
-    'concat',  # 71
-    'concat',  # 72
-    'concat',  # 73
-    'concat',  # 74
-    'concat',  # 75
-    'concat',  # 76
-    'concat',  # 77
-    'concat',  # 78
-]
+model_name = 'vgg16'
+model = load_model(model_name)
+# layers = [
+#     model.conv1,  # 0
+#     model.maxpool1,  # 1
+#     model.conv2,  # 2
+#     model.conv3,  # 3
+#     model.maxpool2,  # 4
+#     model.inception3a.branch1,  # 5
+#     *model.inception3a.branch2,  # 67
+#     *model.inception3a.branch3,  # 89
+#     *model.inception3a.branch4,  # 1011
+#     # concat 70
+#     model.inception3b.branch1,  # 12
+#     *model.inception3b.branch2,  # 1314
+#     *model.inception3b.branch3,  # 1516
+#     *model.inception3b.branch4,  # 1718
+#
+#     model.maxpool3,  # 19
+#     model.inception4a.branch1,  # 20
+#     *model.inception4a.branch2,  # 2122
+#     *model.inception4a.branch3,  # 2324
+#     *model.inception4a.branch4,  # 2526
+#
+#     model.inception4b.branch1,  # 27
+#     *model.inception4b.branch2,  # 2829
+#     *model.inception4b.branch3,  # 3031
+#     *model.inception4b.branch4,  # 3233
+#
+#     model.inception4c.branch1,  # 34
+#     *model.inception4c.branch2,  # 3536
+#     *model.inception4c.branch3,  # 3738
+#     *model.inception4c.branch4,  # 3940
+#
+#     model.inception4d.branch1,  # 41
+#     *model.inception4d.branch2,  # 4243
+#     *model.inception4d.branch3,  # 4445
+#     *model.inception4d.branch4,  # 4647
+#
+#     model.inception4e.branch1,  # 48
+#     *model.inception4e.branch2,  # 4950
+#     *model.inception4e.branch3,  # 5152
+#     *model.inception4e.branch4,  # 5354
+#
+#     model.maxpool4,  # 55
+#     model.inception5a.branch1,  # 56
+#     *model.inception5a.branch2,  # 5758
+#     *model.inception5a.branch3,  # 5960
+#     *model.inception5a.branch4,  # 6162
+#
+#     model.inception5b.branch1,  # 63
+#     *model.inception5b.branch2,  # 6465
+#     *model.inception5b.branch3,  # 6667
+#     *model.inception5b.branch4,  # 6869
+#
+#     # model.avgpool,  # 70  avgpool with output_shape (1, 1) means kernel_size = input_shape
+#     # model.dropout,  # 71
+#     # model.fc,  # 72
+#     'concat',  # 70
+#     'concat',  # 71
+#     'concat',  # 72
+#     'concat',  # 73
+#     'concat',  # 74
+#     'concat',  # 75
+#     'concat',  # 76
+#     'concat',  # 77
+#     'concat',  # 78
+# ]
 
 last_concat = 78
 
-# next_array = [1, 2, 3, 4, [5, 6, 8, 10], [12, 13, 15, 17], 7, [12, 13, 15, 17], 9, [12, 13, 15, 17], 11, [12, 13, 15, 17], 19,
-#               14, 19, 16, 19, 18, 19, [20, 21, 23, 25], [27, 28, 30, 32], 22, [27, 28, 30, 32], 24, [27, 28, 30, 32], 26,
-#               [27, 28, 30, 32], [34, 35, 37, 39], 29, [34, 35, 37, 39], 31, [34, 35, 37, 39], 33, [34, 35, 37, 39],
-#               [41, 42, 44, 46], 36, [41, 42, 44, 46], 38, [41, 42, 44, 46], 40, [41, 42, 44, 46], [48, 49, 51, 53], 43,
-#               [48, 49, 51, 53], 45, [48, 49, 51, 53], 47, [48, 49, 51, 53], 55, 50, 55, 52, 55, 54, 55, [56, 57, 59, 61],
-#               [63, 64, 66, 68], 58, [63, 64, 66, 68], 60, [63, 64, 66, 68], 62, [63, 64, 66, 68], 70, 65, 70,
-#               67, 70, 69, 70, []]
-
-next_array = [1, 2, 3, 4, [5, 6, 8, 10], 70, 7, 70, 9, 70, 11, 70, 71, 14, 71, 16, 71, 18, 71, [20, 21, 23, 25], 72, 22, 72,
-        24, 72, 26, 72, 73, 29, 73, 31, 73, 33,
-        73, 74, 36, 74, 38, 74, 40, 74, 75, 43, 75, 45, 75, 47, 75, 76, 50, 76, 52, 76, 54, 76, [56, 57, 59, 61], 77,
-        58, 77, 60, 77, 62, 77, 78, 65, 78,
-        67, 78, 69, 78, [12, 13, 15, 17], 19, [27, 28, 30, 32], [34, 35, 37, 39], [41, 42, 44, 46],
-        [48, 49, 51, 53], 55, [63, 64, 66, 68], []]
+# next_array = [1, 2, 3, 4, [5, 6, 8, 10], 70, 7, 70, 9, 70, 11, 70, 71, 14, 71, 16, 71, 18, 71, [20, 21, 23, 25], 72, 22, 72,
+#         24, 72, 26, 72, 73, 29, 73, 31, 73, 33,
+#         73, 74, 36, 74, 38, 74, 40, 74, 75, 43, 75, 45, 75, 47, 75, 76, 50, 76, 52, 76, 54, 76, [56, 57, 59, 61], 77,
+#         58, 77, 60, 77, 62, 77, 78, 65, 78,
+#         67, 78, 69, 78, [12, 13, 15, 17], 19, [27, 28, 30, 32], [34, 35, 37, 39], [41, 42, 44, 46],
+#         [48, 49, 51, 53], 55, [63, 64, 66, 68], []]
 
 # print(next_array[63])
 # print(len(next_array))
 # sys.exit(0)
 
-for i in range(len(next_array)):  # 将next数组内的单个元素处理为长度为1的列表
-    if not isinstance(next_array[i], list):
-        next_array[i] = [next_array[i]]
+def translate_next_array(next_array):
+    for i in range(len(next_array)):  # 将next数组内的单个元素处理为长度为1的列表
+        if not isinstance(next_array[i], list):
+            next_array[i] = [next_array[i]]
 
 # last_array = next_to_last(next_array)
 # print(last_array)
@@ -263,6 +252,26 @@ def gen_executionUnits(n_device: int, workload_partition, topology_list):
     return device_group
 
 
+def cal_output(topology_list, last_array, x):
+    n_layers = len(topology_list)
+    outputs = [None for _ in range(n_layers)]
+    mark = np.zeros(n_layers)
+    for lth in topology_list:
+        if lth == 0:
+            outputs[0] = layers[0](x)
+            continue
+        mark[lth] = 1
+        if layers[lth] == 'concat':
+            inputs = [outputs[i] for i in last_array[lth]]
+            output = torch.cat(inputs, 1)
+        else:
+            assert len(last_array[lth]) == 1
+            last_layer = last_array[lth][0]
+            output = layers[lth](outputs[last_layer])
+        outputs[lth] = output
+    return outputs
+
+
 def input_satisfactory2(required_input: tuple, recv_list: list):  # 判断required_input是否满足
     """
     judge whether the required input of sub-task is satisfied with recv inputs
@@ -346,9 +355,10 @@ def execute(tq: SimpleQueue, ri: list, worker_no: int, result_list: list):
 
         task = tq.get()
         layer_no = task.layer_num
-        if layer_no == 78:
-            h = 1
         required_input = input_satisfactory2(task.required_input, ri)
+        if layer_no == 0:
+            dependent_layers, input_range = task.required_input
+            right_input = torch.equal(required_input, x[..., input_range[0]:input_range[1]])
         start = time.time()
         while required_input is None:
             time.sleep(0.1)
@@ -371,6 +381,8 @@ def execute(tq: SimpleQueue, ri: list, worker_no: int, result_list: list):
         else:
             correct = outputs[layer_no][..., partition[worker_no]:partition[worker_no + 1]]
         same = torch.equal(output, correct)
+        if not same:
+            h = 1
         # same_shape = output.shape == correct.shape
         print(f'layer {layer_no} on device {worker_no} is {same}')
 
@@ -390,11 +402,14 @@ def execute(tq: SimpleQueue, ri: list, worker_no: int, result_list: list):
 
 if __name__ == '__main__':
     model.input_shape = 3, 224, 224
+    n_device = 3
+    next_array = model.next
+    translate_next_array(next_array)
+    layers = model.layers
     layers_dependency = next_to_last(next_array)
     n_layers = len(layers_dependency)
     topology_layers = topology_DAG(next_array, layers_dependency)
 
-    n_device = 2
     model.output_shapes = cal_output_shape(model, topology_layers, layers_dependency)
 
     partitions = workload_split(model.output_shapes, n_device)
@@ -440,28 +455,36 @@ if __name__ == '__main__':
             forward_workers[w].append(f_size)
     show_transmission_size(forward_workers)
 
-
-    # 在本地模拟DNN拆分子任务执行判断拆分是否正确
-    task_queue = [SimpleQueue() for _ in range(n_device)]  # store all tasks
-    # execute_queue = [SimpleQueue() for _ in range(n_device)]  # store input-ready tasks
-    recv_input = [[[] for _ in range(n_layers + 1)] for _ in range(n_device)]  # item: (input, from_layer)
-
-    for device, nl in enumerate(execution_units):  # put tasks into corresponding device queue
-        for eu in nl:
-            task_queue[device].put(eu)
-
-
-
     required_inputs = [execution_units[i][0].required_input[1] for i in range(n_device)]
     print(required_inputs)
     x = torch.randn((1, *model.input_shape))  # test input
     outputs = cal_output(topology_layers, layers_dependency, x)
-    # how to store the recv input and how to judge required input is satisfied
+
+    # right_output = model.conv1(x)
+    # compt_outputs = []
+    # first_eu = [execution_units[i][0] for i in range(n_device)]
+    # ris = [x[..., eu.required_input[1][0]:eu.required_input[1][1]] for eu in first_eu]
+    # for i in range(n_device):
+    #     weight = model.conv1.conv.weight
+    #     compt_outputs.append(first_eu[i].execute(ris[i], weight))
+    # final_output = torch.cat(compt_outputs, dim=-1)
+    # print(torch.equal(right_output, final_output))
+
     simulate = True
     if not simulate:
         sys.exit(0)
     local = False
     if local:
+        # 在本地模拟DNN拆分子任务执行判断拆分是否正确
+        task_queue = [SimpleQueue() for _ in range(n_device)]  # store all tasks
+        # execute_queue = [SimpleQueue() for _ in range(n_device)]  # store input-ready tasks
+        recv_input = [[[] for _ in range(n_layers + 1)] for _ in range(n_device)]  # item: (input, from_layer)
+
+        for device, nl in enumerate(execution_units):  # put tasks into corresponding device queue
+            for eu in nl:
+                task_queue[device].put(eu)
+
+        # how to store the recv input and how to judge required input is satisfied
         for device, ri in enumerate(required_inputs):
             recv_input[device][-1].append(x[..., ri[0]:ri[1]])  # cut from the last_array dimension of 4D input
 
@@ -474,7 +497,8 @@ if __name__ == '__main__':
         for worker in threads:
             worker.join()
         results.sort(key=lambda item: item[0])
-        result = results[0][1]
+        result = torch.cat([r[1] for r in results], -1)
+        # result = results[0][1]
         last_output = outputs[-1]
         print(torch.allclose(result, last_output, rtol=0, atol=1e-16))
         # print(right_output.shape)
@@ -507,9 +531,13 @@ if __name__ == '__main__':
             print(f'Error occurred when send required input to workers:\n{e}')
 
         try:
-            data = recv_data(m.worker_sockets[0])
-            # print(data)
+            # data = recv_data(m.worker_sockets[0])  # 只收concat之后来自一个worker的output
+
+            recv_tasks = [async_recv_data(sock) for sock in m.worker_sockets]
+            results = loop.run_until_complete(asyncio.gather(*recv_tasks))
             consumption = time.time() - start
+            results.sort(key=lambda item: item[0])
+            data = torch.cat([r[1] for r in results], -1)
             print(torch.allclose(outputs[-1], data))
             print(f'Recv final result in {consumption}s')
         except timeout:

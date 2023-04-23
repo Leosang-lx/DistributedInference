@@ -78,10 +78,5 @@ print(len(pickle.dumps(b)) / 1024)
 #     print(time.time() - start)
 #     print(res)
 
-def get_required_strings(keyword: str, strings: list[str]):
-    ans = []
-    for s in strings:
-        if keyword in s:
-            ans.append(s)
-    return ans
+
 

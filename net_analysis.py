@@ -162,9 +162,10 @@ def cal_output_shape(net, topology_list, last_array):
             else:
                 input_shape = output_shapes[last_array[lth][0]]
             x = torch.randn(input_shape)
-            if isinstance(layers[lth], nn.Linear):
+            this_layer = net.layers[lth]
+            if isinstance(this_layer, nn.Linear):
                 x = torch.flatten(x, 1)
-            output = layers[lth](x)
+            output = this_layer(x)
         output_shapes[lth] = output.shape
 
     return output_shapes
@@ -247,6 +248,10 @@ def output_input(output_range: tuple, layer_config=None) -> tuple:
         return round(o_s / scale_factor), round(o_e / scale_factor)
     elif layer_type in ('conv', 'basicConv', 'maxpool'):
         kernel_size, stride, padding = layer_config['kernel_size'], layer_config['stride'], layer_config['padding']
+        if isinstance(kernel_size, int):
+            kernel_size = (kernel_size, kernel_size)
+        if isinstance(stride, int):
+            stride = (stride, stride)
         if padding != 0:
             padding = padding[1]
         return o_s * stride[1] - padding, (o_e - 1) * stride[1] + kernel_size[1] - padding
@@ -474,7 +479,7 @@ if __name__ == '__main__':
     # print(f'layers\' topology list: {topology_layers}')
     # print(f'layers\' dependency   : {layers_dependency}')
 
-    n_device = 3
+    n_device = 2
     model.output_shapes = cal_output_shape(model, topology_layers, layers_dependency)
     # for i in range(len(model.output_shapes)):
     # print(f'{i}: {model.output_shapes[i]}')

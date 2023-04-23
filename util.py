@@ -3,6 +3,7 @@ from subprocess import getstatusoutput
 from socket import *
 import torch
 from models.googlenet import GoogLeNet
+from models.VGG16 import vgg16
 from comm import *
 
 
@@ -209,7 +210,8 @@ def load_model(model_name: str, dict_path=None, device='cpu'):
     model_name = model_name.lower()
     if model_name == 'googlenet':
         model = GoogLeNet()
-
+    elif model_name == 'vgg16':
+        model = vgg16()
     else:
         raise Exception('Invalid model name!')
     model.to(device)

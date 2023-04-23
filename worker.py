@@ -125,7 +125,8 @@ class Worker:
         """
 
         print('Loading DNN model...')
-        self.model = load_model('googlenet')
+        # self.model = load_model('googlenet')
+        self.model = load_model('vgg16')
         self.recv_inputs = [[] for _ in range(self.model.depth)]
 
         # start recv threads, recv results as soon as possible
@@ -218,7 +219,7 @@ class Worker:
                 #         print(f'Error occurs when sending final output to master: {e}')
 
                 # 协程IO并发
-                if len(available_task.forwarding) > 0:
+                if len(available_task.forwarding) > 0:  # send required data to worker device
                     args = []
                     for f in available_task.forwarding:
                         if len(f) == 2:  # (to_device, interval)
@@ -235,9 +236,10 @@ class Worker:
                                          available_task.layer_num, (l, r)))
                     send_tasks = [async_send_tensor(*arg) for arg in args]
                     loop.run_until_complete(asyncio.gather(*send_tasks))
-                else:
+                else:  # send required results back to master device
                     try:
-                        send_data(self.master_socket, output)
+                        # send_data(self.master_socket, output)
+                        send_data(self.master_socket, (self.number, output))
                     except Exception as e:
                         print(f'Error occurred when sending intervals: \n{e}')
             if finish:

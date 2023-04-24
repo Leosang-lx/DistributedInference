@@ -147,6 +147,64 @@ def input_satisfactory2(required_input: tuple, recv_list: list):  # 判断requir
         return collects
 
 
+def input_satisfactory3(required_input: tuple, recv_list: list):  # split concat layer
+    """
+    judge whether the required input of sub-task is satisfied with recv inputs
+    :param required_input: a tuple (dependent layers in list, required input range)
+    :param recv_list: recv input stored by layers
+    :return: return the required concat input else None
+    """
+    dependent_layers, input_range = required_input
+    # print(required_input)
+    if len(dependent_layers) > 1:  # concat output from execution units of several layers
+        collects = []
+        for i, dl in enumerate(dependent_layers):
+            c, d = input_range
+            input_list = recv_list[dl]
+            input_list.sort(key=lambda item: item[0][0])
+            collect = []
+            for interval, data in input_list:
+                a, b = interval
+                if a <= c < b:
+                    if d <= b:
+                        collect.append(data[..., c - a:d - a])
+                        c = d
+                        break
+                    else:
+                        collect.append(data[..., c - a:])
+                    c = b
+            if c == d:
+                collects.append(torch.concat(collect, dim=-1))
+            else:
+                return None
+        return collects
+
+    else:  # collect paddings len(dependent_layers) == 1 or == 0
+        c, d = input_range
+        if len(dependent_layers) == 0:  # input of the first layer
+            if len(recv_list[-1]) == 0:
+                return None
+            return recv_list[-1][0]
+        else:
+            input_list = recv_list[dependent_layers[0]]
+        input_list.sort(key=lambda item: item[0][0])
+        collect = []
+        for interval, data in input_list:
+            a, b = interval
+            if a <= c < b:
+                if d <= b:
+                    collect.append(data[..., c - a:d - a])
+                    c = d
+                    break
+                else:
+                    collect.append(data[..., c - a:])
+                c = b
+        if c == d:
+            # print(torch.concat(collect, dim=-1).shape)
+            return torch.concat(collect, dim=-1)
+        return None
+
+
 def get_ip_addr(__subnet__: str):  # get ip by the prefix of __subnet__
     status, ip_addr = getstatusoutput(f'ifconfig | grep "{__subnet__}" | awk \'{{print $2}}\'')
     if status == 0:

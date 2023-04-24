@@ -13,7 +13,7 @@ from paint import *
 from util import *
 
 # take GoogLeNet as DAG example
-model = GoogLeNet()
+model = load_model('googlenet')
 layers = [
     model.conv1,  # 0
     model.maxpool1,  # 1
@@ -224,16 +224,16 @@ def cal_output(topology_list, last_array, x):
 def workload_split(output_shapes, num_device):  # temporarily average
     partitions = []
     for i, shape in enumerate(output_shapes):
-        if layers[i] == 'concat':
-            partitions.append(1)
-        else:
-            length = shape[-1]
-            partition = [0 for _ in range(num_device + 1)]
-            partition[-1] = length
-            average = round(length / num_device)
-            for i in range(1, num_device):
-                partition[i] = average * i
-            partitions.append(partition)
+        # if layers[i] == 'concat':
+        #     partitions.append(1)
+        # else:
+        length = shape[-1]
+        partition = [0 for _ in range(num_device + 1)]
+        partition[-1] = length
+        average = round(length / num_device)
+        for i in range(1, num_device):
+            partition[i] = average * i
+        partitions.append(partition)
     return partitions
 
 
@@ -241,7 +241,7 @@ def workload_split(output_shapes, num_device):  # temporarily average
 def output_input(output_range: tuple, layer_config=None) -> tuple:
     o_s, o_e = output_range
     layer_type = layer_config['type']
-    if layer_type == 'relu':  # most activation layers
+    if layer_type in ['relu', 'concat']:  # most activation layers
         return output_range
     elif layer_type == 'upsample':
         scale_factor = layer_type['scale_factor']
@@ -266,56 +266,32 @@ def gen_inputDependency(layer_list, topology_list, output_partitions, last_array
     for l in topology_list:  # 当前这层
         partition = output_partitions[l]
 
-        if layers[l] == 'concat':
-            last_division = tuple(len(partitions[last_layer]) - 1 for last_layer in last_array[l])
-            required_input = (last_array[l], last_division)
-            layer_config = {'type': 'concat'}
-            ids[l].append((required_input, layer_config, []))
+        # if layers[l] == 'concat':
+        #     last_division = tuple(len(partitions[last_layer]) - 1 for last_layer in last_array[l])
+        #     required_input = (last_array[l], last_division)
+        #     layer_config = {'type': 'concat'}
+        #     ids[l].append((required_input, layer_config, []))
+        # else:
+        if l == 0:
+            H = model.input_shape[-1]
         else:
-            if l == 0:
-                H = model.input_shape[-1]
-            else:
-                H = model.output_shapes[last_array[l][0]][-1]
-            for i in range(len(partition) - 1):
-                # get output range
-                output_range = partition[i: i + 2]  # [o_s, o_e)
-                layer = layer_list[l]
-                # get corresponding input range
-                if isinstance(layer, (nn.Conv2d, BasicConv2d)):
-                    type = 'conv'
-                    if isinstance(layer, BasicConv2d):
-                        layer = layer.conv
-                        type = 'basicConv'
-                    layer_config = {'type': type, 'kernel_size': layer.kernel_size, 'stride': layer.stride,
-                                    'padding': layer.padding}
-                    i_s, i_e = input_range = output_input(output_range, layer_config)  # [i_s, i_e)
-                    if layer.padding == 0:
-                        padding = (0, 0, 0, 0)
-                    else:
-                        if i_s < 0:
-                            upper_padding = -i_s
-                            i_s = 0
-                        else:
-                            upper_padding = 0
-                        if i_e > H:
-                            bottom_padding = i_e - H
-                            i_e = H
-                        else:
-                            bottom_padding = 0
-                        padding = (upper_padding, bottom_padding, *layer.padding)
-                        input_range = (i_s, i_e)
-                    layer_config['padding'] = padding
-
-                elif isinstance(layer, nn.MaxPool2d):  # padding = 0 for most maxpool layers
-                    layer_config = {'type': 'maxpool', 'kernel_size': layer.kernel_size, 'stride': layer.stride,
-                                    'padding': layer.padding, 'ceil_mode': layer.ceil_mode}
-                    i_s, i_e = output_input(output_range, layer_config)  # [i_s, i_e)
-
-                    if layer.padding == 0:
-                        padding = (0, 0)
-                    else:
-                        padding = layer.padding
-                    # else:
+            H = model.output_shapes[last_array[l][0]][-1]
+        for i in range(len(partition) - 1):
+            # get output range
+            output_range = partition[i: i + 2]  # [o_s, o_e)
+            layer = layer_list[l]
+            # get corresponding input range
+            if isinstance(layer, (nn.Conv2d, BasicConv2d)):
+                type = 'conv'
+                if isinstance(layer, BasicConv2d):
+                    layer = layer.conv
+                    type = 'basicConv'
+                layer_config = {'type': type, 'kernel_size': layer.kernel_size, 'stride': layer.stride,
+                                'padding': layer.padding}
+                i_s, i_e = input_range = output_input(output_range, layer_config)  # [i_s, i_e)
+                if layer.padding == 0:
+                    padding = (0, 0, 0, 0)
+                else:
                     if i_s < 0:
                         upper_padding = -i_s
                         i_s = 0
@@ -326,22 +302,49 @@ def gen_inputDependency(layer_list, topology_list, output_partitions, last_array
                         i_e = H
                     else:
                         bottom_padding = 0
-                    padding = (upper_padding, bottom_padding, *padding)
+                    padding = (upper_padding, bottom_padding, *layer.padding)
                     input_range = (i_s, i_e)
-                    layer_config['padding'] = padding
+                layer_config['padding'] = padding
 
-                elif isinstance(layer, nn.Upsample):
-                    layer_config = {'type': 'upsample', 'scale_factor': layer.scale_factor}
-                    input_range = output_input(output_range, layer_config)
-                elif isinstance(layer, (nn.Sigmoid, nn.ReLU, nn.Dropout, nn.BatchNorm2d)):
-                    layer_config = {'type': 'bijective'}
-                    input_range = output_range
+            elif isinstance(layer, nn.MaxPool2d):  # padding = 0 for most maxpool layers
+                layer_config = {'type': 'maxpool', 'kernel_size': layer.kernel_size, 'stride': layer.stride,
+                                'padding': layer.padding, 'ceil_mode': layer.ceil_mode}
+                i_s, i_e = input_range = output_input(output_range, layer_config)  # [i_s, i_e)
+
+                if layer.padding == 0:
+                    padding = (0, 0)
                 else:
-                    input_range = None
-                    layer_config = None
+                    padding = layer.padding
+                # else:
+                if i_s < 0:
+                    upper_padding = -i_s
+                    i_s = 0
+                else:
+                    upper_padding = 0
+                if i_e > H:
+                    bottom_padding = i_e - H
+                    i_e = H
+                else:
+                    bottom_padding = 0
+                padding = (upper_padding, bottom_padding, *padding)
+                input_range = (i_s, i_e)
+                layer_config['padding'] = padding
 
-                required_input = (last_array[l], input_range)
-                ids[l].append((required_input, layer_config, []))
+            elif isinstance(layer, nn.Upsample):
+                layer_config = {'type': 'upsample', 'scale_factor': layer.scale_factor}
+                input_range = output_input(output_range, layer_config)
+            elif layer == 'concat':
+                layer_config = {'type': layer}
+                input_range = output_range
+            elif isinstance(layer, (nn.Sigmoid, nn.ReLU, nn.Dropout, nn.BatchNorm2d)):
+                layer_config = {'type': 'bijective'}
+                input_range = output_range
+            else:
+                input_range = None
+                layer_config = None
+
+            required_input = (last_array[l], input_range)
+            ids[l].append((required_input, layer_config, []))
 
     return ids
 
@@ -383,33 +386,33 @@ def gen_forwarding(n_device: int, input_dependency, topology_list, next_layers, 
         if len(nexts) == 0:  # output of final layer should send back to master
             continue
             # input_dependency[l][0][2].append(1)
-        if layers[l] == 'concat':  # layer l is concat
-            forwarding = [[] for _ in range(n_device)]
-            for nl in nexts:
-                for i, eu in enumerate(input_dependency[nl]):
-                    input_range = eu[0][1]
-                    forwarding[i].append(input_range)
-            for to_device, f in enumerate(forwarding):  # d为设备号
-                if len(f) > 0:  # 按照转发对应的设备号去重
-                    for interval in get_set_union(f):
-                        input_dependency[l][0][2].append((to_device, interval))
-        elif len(nexts) == 1 and layers[nexts[0]] == 'concat':  # next_array layer is concat
+        # if layers[l] == 'concat':  # layer l is concat
+        #     forwarding = [[] for _ in range(n_device)]
+        #     for nl in nexts:
+        #         for i, eu in enumerate(input_dependency[nl]):
+        #             input_range = eu[0][1]
+        #             forwarding[i].append(input_range)
+        #     for to_device, f in enumerate(forwarding):  # d为设备号
+        #         if len(f) > 0:  # 按照转发对应的设备号去重
+        #             for interval in get_set_union(f):
+        #                 input_dependency[l][0][2].append((to_device, interval))
+        # elif len(nexts) == 1 and layers[nexts[0]] == 'concat':  # next_array layer is concat
+        #     for i in range(len(partition) - 1):
+        #         input_dependency[l][i][2].append((0, (0, partition[i + 1] - partition[i]), partition[i]))
+        # else:  # no concat layer between this layer and next_array layer
+        for nl in nexts:
             for i in range(len(partition) - 1):
-                input_dependency[l][i][2].append((0, (0, partition[i + 1] - partition[i]), partition[i]))
-        else:  # no concat layer between this layer and next_array layer
-            for nl in nexts:
-                for i in range(len(partition) - 1):
-                    forwarding = [[] for _ in range(n_device)]  # 未去重的forwarding
-                    for j, eu in enumerate(input_dependency[nl]):
-                        _, input_range = eu[0]
-                        overlap = get_intersection((partition[i], partition[i + 1]), input_range)
-                        if overlap is not None:
-                            forwarding[j].append(overlap)
-                    for to_device, f in enumerate(forwarding):  # d: device_id
-                        if len(f) > 0:  # 按照转发对应的设备号去重
-                            for interval in get_set_union(f):
-                                input_dependency[l][i][2].append(
-                                    (to_device, (interval[0] - partition[i], interval[1] - partition[i]), partition[i]))
+                forwarding = [[] for _ in range(n_device)]  # 未去重的forwarding
+                for j, eu in enumerate(input_dependency[nl]):
+                    _, input_range = eu[0]
+                    overlap = get_intersection((partition[i], partition[i + 1]), input_range)
+                    if overlap is not None:
+                        forwarding[j].append(overlap)
+                for to_device, f in enumerate(forwarding):  # d: device_id
+                    if len(f) > 0:  # 按照转发对应的设备号去重
+                        for interval in get_set_union(f):
+                            input_dependency[l][i][2].append(
+                                (to_device, (interval[0] - partition[i], interval[1] - partition[i]), partition[i]))
 
 
 # for eu in workload_dependency:
@@ -432,16 +435,19 @@ def execute(tq: SimpleQueue, ri: list, worker_no: int, result_list: list):
 
         task = tq.get()
         layer_no = task.layer_num
-        required_input = input_satisfactory(task.required_input, ri)
+        if layer_no == 70:
+            h = 1
+        required_input = input_satisfactory3(task.required_input, ri)
         start = time.time()
         while required_input is None:
             time.sleep(0.1)
-            required_input = input_satisfactory(task.required_input, ri)
+            required_input = input_satisfactory3(task.required_input, ri)
             if time.time() - start > 3:
                 print(f'layer {layer_no} on device {worker_no} is blocked')
                 return
         # print(f'input of layer {layer_no} device {worker_no} is ready')
         layer = layers[layer_no]
+
         if isinstance(layer, BasicConv2d):
             output = task.execute(required_input, layer.conv.weight)
         # elif isinstance(layer, torch.nn.Conv2d):
@@ -471,7 +477,7 @@ def execute(tq: SimpleQueue, ri: list, worker_no: int, result_list: list):
 
 
 if __name__ == '__main__':
-    model.input_shape = 3, 224, 224
+    model.input_shape = 3, 600, 600
     layers_dependency = next_to_last(next)
     n_layers = len(layers_dependency)
     topology_layers = topology_DAG(next, layers_dependency)
@@ -547,7 +553,7 @@ if __name__ == '__main__':
     simulate = True
     if not simulate:
         sys.exit(0)
-    local = True
+    local = False
     if local:
         for device, ri in enumerate(required_inputs):
             recv_input[device][-1].append(x[..., ri[0]:ri[1]])  # cut from the last_array dimension of 4D input
@@ -561,7 +567,8 @@ if __name__ == '__main__':
         for worker in threads:
             worker.join()
         results.sort(key=lambda item: item[0])
-        result = results[0][1]
+        result = torch.cat([r[1] for r in results], -1)
+        # result = results[0][1]
         last_output = outputs[-1]
         print(torch.allclose(result, last_output, rtol=0, atol=1e-16))
         # print(right_output.shape)
@@ -594,8 +601,13 @@ if __name__ == '__main__':
             print(f'Error occurred when send required input to workers:\n{e}')
 
         try:
-            data = recv_data(m.worker_sockets[0])
+            # data = recv_data(m.worker_sockets[0])  # 只收concat之后来自一个worker的output
+
+            recv_tasks = [async_recv_data(sock) for sock in m.worker_sockets]
+            results = loop.run_until_complete(asyncio.gather(*recv_tasks))
             consumption = time.time() - start
+            results.sort(key=lambda item: item[0])
+            data = torch.cat([r[1] for r in results], -1)
             print(torch.allclose(outputs[-1], data))
             print(f'Recv final result in {consumption}s')
         except timeout:
@@ -617,8 +629,7 @@ if __name__ == '__main__':
         except Exception as e:
             print(f'Error occurred when recv intervals:\n{e}')
 
-
-### replay the execution process:
+        ### replay the execution process:
         print("----------------------Process Replay----------------------")
         execution_workers = []
         gap_workers = []
@@ -645,14 +656,14 @@ if __name__ == '__main__':
             gap_workers.append(list(zip(task_ids, gap[gap_idx10])))
 
         for w, exe_sum in enumerate(sums_workers):
-            print(f'worker {w+1} execution sum: {exe_sum}')
+            print(f'worker {w + 1} execution sum: {exe_sum}')
         # show the most time-consuming execution and gap intervals in the process
         print("The most time-consuming tasks with layer number")
         for w, execution_worker in enumerate(execution_workers):
-            print(f'{w+1}: {execution_worker}')
+            print(f'{w + 1}: {execution_worker}')
         print("The most time-consuming gap with last_array layer number")
         for w, gap_worker in enumerate(gap_workers):
-            print(f'{w+1}: {gap_worker}')
+            print(f'{w + 1}: {gap_worker}')
 
         print('Records of all subtasks')
         for w, intervals in enumerate(accum_time):

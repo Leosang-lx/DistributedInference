@@ -125,8 +125,8 @@ class Worker:
         """
 
         print('Loading DNN model...')
-        # self.model = load_model('googlenet')
-        self.model = load_model('vgg16')
+        self.model = load_model('googlenet')
+        # self.model = load_model('vgg16')
         self.recv_inputs = [[] for _ in range(self.model.depth)]
 
         # start recv threads, recv results as soon as possible
@@ -184,7 +184,7 @@ class Worker:
                         print('Tasks in queue is empty!')
                         finish = True
                         break
-                required_input = input_satisfactory2(task.required_input, self.recv_inputs)
+                required_input = input_satisfactory3(task.required_input, self.recv_inputs)
                 if required_input is None:
                     if self.execute_queue.empty():
                         time.sleep(0.01)

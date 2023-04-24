@@ -9,7 +9,7 @@ from paint import *
 from util import *
 from net_analysis import next_to_last, topology_DAG, cal_output_shape, workload_split, output_input
 
-model_name = 'vgg16'
+model_name = 'googlenet'
 model = load_model(model_name)
 # layers = [
 #     model.conv1,  # 0
@@ -401,8 +401,8 @@ def execute(tq: SimpleQueue, ri: list, worker_no: int, result_list: list):
 
 
 if __name__ == '__main__':
-    model.input_shape = 3, 224, 224
-    n_device = 3
+    model.input_shape = 3, 600, 600
+    n_device = 2
     next_array = model.next
     translate_next_array(next_array)
     layers = model.layers
@@ -536,10 +536,10 @@ if __name__ == '__main__':
             recv_tasks = [async_recv_data(sock) for sock in m.worker_sockets]
             results = loop.run_until_complete(asyncio.gather(*recv_tasks))
             consumption = time.time() - start
+            print(f'Recv final result in {consumption}s')
             results.sort(key=lambda item: item[0])
             data = torch.cat([r[1] for r in results], -1)
             print(torch.allclose(outputs[-1], data))
-            print(f'Recv final result in {consumption}s')
         except timeout:
             print('Recv results time out!')
         except Exception as e:

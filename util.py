@@ -158,7 +158,7 @@ def input_satisfactory3(required_input: tuple, recv_list: list):  # split concat
     # print(required_input)
     if len(dependent_layers) > 1:  # concat output from execution units of several layers
         collects = []
-        for i, dl in enumerate(dependent_layers):
+        for dl in dependent_layers:
             c, d = input_range
             input_list = recv_list[dl]
             input_list.sort(key=lambda item: item[0][0])
@@ -172,7 +172,7 @@ def input_satisfactory3(required_input: tuple, recv_list: list):  # split concat
                         break
                     else:
                         collect.append(data[..., c - a:])
-                    c = b
+                        c = b
             if c == d:
                 collects.append(torch.concat(collect, dim=-1))
             else:

@@ -1,9 +1,9 @@
+# centralize concatenation
 import asyncio
 import queue
 import sys
 import threading
 import time
-from queue import SimpleQueue
 
 from torch import nn
 

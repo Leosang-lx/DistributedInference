@@ -10,7 +10,8 @@ maxpool = 3
 
 
 class ExecutionUnit:
-    def __init__(self, required_input: tuple, operator: dict, forwarding: tuple, device_num: int, layer_num: int):
+
+    def __init__(self, required_input: tuple, operator: dict, forwarding: list, device_num: int, layer_num: int):
         self.required_input = required_input
         # self.params = weights  # loaded in each edge device
         self.operator = operator  # 1st: operator_name, 2nd: operation parameters
@@ -22,7 +23,10 @@ class ExecutionUnit:
         type = self.operator['type']
         try:
             if type == 'basicConv':
-                return F.relu(F.conv2d(F.pad(x, pad=self.operator['padding']), weight, stride=self.operator['stride']), inplace=True)
+                out = F.conv2d(F.pad(x, pad=self.operator['padding']), weight, stride=self.operator['stride'])
+                # out = F.batch_norm(out, torch.zeros(out.shape[1]), torch.ones(out.shape[1]), *self.operator['bn_args'])
+                out = F.relu(out, inplace=True)
+                return out
             # elif type == 'conv':  # 目前只有结合化的basicconv，暂不考虑单conv层
             #     return F.conv2d(F.pad(x, pad=self.operator['padding']), weight, stride=self.operator['stride'], padding=self.operator['padding'])
             elif type == 'maxpool':

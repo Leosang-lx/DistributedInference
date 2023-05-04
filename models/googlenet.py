@@ -95,44 +95,44 @@ class GoogLeNet(nn.Module):
             *self.inception3b.branch2,  # 1314
             *self.inception3b.branch3,  # 1516
             *self.inception3b.branch4,  # 1718
-
+            # concat 71
             self.maxpool3,  # 19
             self.inception4a.branch1,  # 20
             *self.inception4a.branch2,  # 2122
             *self.inception4a.branch3,  # 2324
             *self.inception4a.branch4,  # 2526
-
+            # concat 72
             self.inception4b.branch1,  # 27
             *self.inception4b.branch2,  # 2829
             *self.inception4b.branch3,  # 3031
             *self.inception4b.branch4,  # 3233
-
+            # concat 73
             self.inception4c.branch1,  # 34
             *self.inception4c.branch2,  # 3536
             *self.inception4c.branch3,  # 3738
             *self.inception4c.branch4,  # 3940
-
+            # concat 74
             self.inception4d.branch1,  # 41
             *self.inception4d.branch2,  # 4243
             *self.inception4d.branch3,  # 4445
             *self.inception4d.branch4,  # 4647
-
+            # concat 75
             self.inception4e.branch1,  # 48
             *self.inception4e.branch2,  # 4950
             *self.inception4e.branch3,  # 5152
             *self.inception4e.branch4,  # 5354
-
+            # concat 76
             self.maxpool4,  # 55
             self.inception5a.branch1,  # 56
             *self.inception5a.branch2,  # 5758
             *self.inception5a.branch3,  # 5960
             *self.inception5a.branch4,  # 6162
-
+            # concat 77
             self.inception5b.branch1,  # 63
             *self.inception5b.branch2,  # 6465
             *self.inception5b.branch3,  # 6667
             *self.inception5b.branch4,  # 6869
-
+            # concat 78
             # model.avgpool,  # 70  avgpool with output_shape (1, 1) means kernel_size = input_shape
             # model.dropout,  # 71
             # model.fc,  # 72

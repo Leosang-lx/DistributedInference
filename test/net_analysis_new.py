@@ -1,9 +1,10 @@
+# total partition
 import asyncio
 import queue
+import random
 import sys
 import threading
 import time
-from queue import SimpleQueue
 
 from torch import nn
 
@@ -14,93 +15,13 @@ from util import *
 
 # take GoogLeNet as DAG example
 model = load_model('googlenet')
-layers = [
-    model.conv1,  # 0
-    model.maxpool1,  # 1
-    model.conv2,  # 2
-    model.conv3,  # 3
-    model.maxpool2,  # 4
-    model.inception3a.branch1,  # 5
-    *model.inception3a.branch2,  # 67
-    *model.inception3a.branch3,  # 89
-    *model.inception3a.branch4,  # 1011
-    # concat 70
-    model.inception3b.branch1,  # 12
-    *model.inception3b.branch2,  # 1314
-    *model.inception3b.branch3,  # 1516
-    *model.inception3b.branch4,  # 1718
-
-    model.maxpool3,  # 19
-    model.inception4a.branch1,  # 20
-    *model.inception4a.branch2,  # 2122
-    *model.inception4a.branch3,  # 2324
-    *model.inception4a.branch4,  # 2526
-
-    model.inception4b.branch1,  # 27
-    *model.inception4b.branch2,  # 2829
-    *model.inception4b.branch3,  # 3031
-    *model.inception4b.branch4,  # 3233
-
-    model.inception4c.branch1,  # 34
-    *model.inception4c.branch2,  # 3536
-    *model.inception4c.branch3,  # 3738
-    *model.inception4c.branch4,  # 3940
-
-    model.inception4d.branch1,  # 41
-    *model.inception4d.branch2,  # 4243
-    *model.inception4d.branch3,  # 4445
-    *model.inception4d.branch4,  # 4647
-
-    model.inception4e.branch1,  # 48
-    *model.inception4e.branch2,  # 4950
-    *model.inception4e.branch3,  # 5152
-    *model.inception4e.branch4,  # 5354
-
-    model.maxpool4,  # 55
-    model.inception5a.branch1,  # 56
-    *model.inception5a.branch2,  # 5758
-    *model.inception5a.branch3,  # 5960
-    *model.inception5a.branch4,  # 6162
-
-    model.inception5b.branch1,  # 63
-    *model.inception5b.branch2,  # 6465
-    *model.inception5b.branch3,  # 6667
-    *model.inception5b.branch4,  # 6869
-
-    # model.avgpool,  # 70  avgpool with output_shape (1, 1) means kernel_size = input_shape
-    # model.dropout,  # 71
-    # model.fc,  # 72
-    'concat',  # 73
-    'concat',  # 74
-    'concat',  # 75
-    'concat',  # 76
-    'concat',  # 77
-    'concat',  # 78
-    'concat',  # 79
-    'concat',  # 80
-    'concat',  # 81
-]
-# DAG of GoogLeNet
-# next_array = [1, 2, 3, 4, [5, 6, 8, 10], 73, 7, 73, 9, 73, 11, 73, 74, 14, 74, 16, 74, 18, 74, [20, 21, 23, 25], 75, 22, 75,
-#         24, 75, 26, 75, 76, 29, 76, 31, 76, 33,
-#         76, 77, 36, 77, 38, 77, 40, 77, 78, 43, 78, 45, 78, 47, 78, 79, 50, 79, 52, 79, 54, 79, [56, 57, 59, 61], 80,
-#         58, 80, 60, 80, 62, 80, 81, 65, 81,
-#         67, 81, 69, 81, 71, 72, [], [12, 13, 15, 17], 19, [27, 28, 30, 32], [34, 35, 37, 39], [41, 42, 44, 46],  # whole network
-#         [48, 49, 51, 53], 55, [63, 64, 66, 68], 70]
-next = [1, 2, 3, 4, [5, 6, 8, 10], 70, 7, 70, 9, 70, 11, 70, 71, 14, 71, 16, 71, 18, 71, [20, 21, 23, 25], 72, 22, 72,
-        24, 72, 26, 72, 73, 29, 73, 31, 73, 33,
-        73, 74, 36, 74, 38, 74, 40, 74, 75, 43, 75, 45, 75, 47, 75, 76, 50, 76, 52, 76, 54, 76, [56, 57, 59, 61], 77,
-        58, 77, 60, 77, 62, 77, 78, 65, 78,
-        67, 78, 69, 78, [12, 13, 15, 17], 19, [27, 28, 30, 32], [34, 35, 37, 39], [41, 42, 44, 46],
-        # remove the last_array several layers like adaptive average pool and fully connected layers
-        [48, 49, 51, 53], 55, [63, 64, 66, 68], []]
-
-for i in range(len(next)):  # 将next数组内的单个元素处理为长度为1的列表
-    if not isinstance(next[i], list):
-        next[i] = [next[i]]
+layers = model.layers
 
 
-# print(len(next_array))
+def translate_next_array(next_array):
+    for i in range(len(next_array)):  # 将next数组内的单个元素处理为长度为1的列表
+        if not isinstance(next_array[i], list):
+            next_array[i] = [next_array[i]]
 
 
 def next_to_last(next):  # 将next数组转化为last数组，即last数组
@@ -221,7 +142,7 @@ def cal_output(topology_list, last_array, x):
 
 
 # partitioning dimension: -1 # 假设从最后一维开始切
-def workload_split(output_shapes, num_device):  # temporarily average
+def workload_partition(output_shapes, num_device):  # temporarily average
     partitions = []
     for i, shape in enumerate(output_shapes):
         # if layers[i] == 'concat':
@@ -233,6 +154,23 @@ def workload_split(output_shapes, num_device):  # temporarily average
         average = round(length / num_device)
         for i in range(1, num_device):
             partition[i] = average * i
+        partitions.append(partition)
+    return partitions
+
+
+def random_workload_partition(output_shapes, num_device):
+    partitions = []
+    for i, shape in enumerate(output_shapes):
+        length = shape[-1]
+        partition = []
+        cnt = 0
+        while cnt < num_device - 1:
+            p = random.randint(1, length - 1)
+            if p not in partition:
+                cnt += 1
+                partition.append(p)
+        partition.sort()
+        partition = [0, *partition, length]
         partitions.append(partition)
     return partitions
 
@@ -281,15 +219,16 @@ def gen_inputDependency(layer_list, topology_list, output_partitions, last_array
             output_range = partition[i: i + 2]  # [o_s, o_e)
             layer = layer_list[l]
             # get corresponding input range
-            if isinstance(layer, (nn.Conv2d, BasicConv2d)):
-                type = 'conv'
-                if isinstance(layer, BasicConv2d):
-                    layer = layer.conv
-                    type = 'basicConv'
-                layer_config = {'type': type, 'kernel_size': layer.kernel_size, 'stride': layer.stride,
-                                'padding': layer.padding}
+            if isinstance(layer, BasicConv2d):
+                # type = 'conv'
+                # if isinstance(layer, BasicConv2d):
+                conv = layer.conv
+                # bn = layer.bn
+                type = 'basicConv'
+                layer_config = {'type': type, 'kernel_size': conv.kernel_size, 'stride': conv.stride,
+                                'padding': conv.padding}  #, 'bn_args': (bn.weight, bn.bias, False, bn.momentum, bn.eps)}
                 i_s, i_e = input_range = output_input(output_range, layer_config)  # [i_s, i_e)
-                if layer.padding == 0:
+                if conv.padding == 0:
                     padding = (0, 0, 0, 0)
                 else:
                     if i_s < 0:
@@ -302,7 +241,7 @@ def gen_inputDependency(layer_list, topology_list, output_partitions, last_array
                         i_e = H
                     else:
                         bottom_padding = 0
-                    padding = (upper_padding, bottom_padding, *layer.padding)
+                    padding = (upper_padding, bottom_padding, *conv.padding)
                     input_range = (i_s, i_e)
                 layer_config['padding'] = padding
 
@@ -477,7 +416,9 @@ def execute(tq: SimpleQueue, ri: list, worker_no: int, result_list: list):
 
 
 if __name__ == '__main__':
-    model.input_shape = 3, 600, 600
+    model.input_shape = 3, 224, 224
+    next = model.next
+    translate_next_array(next)
     layers_dependency = next_to_last(next)
     n_layers = len(layers_dependency)
     topology_layers = topology_DAG(next, layers_dependency)
@@ -490,7 +431,7 @@ if __name__ == '__main__':
     # for i in range(len(model.output_shapes)):
     # print(f'{i}: {model.output_shapes[i]}')
 
-    partitions = workload_split(model.output_shapes, n_device)
+    partitions = workload_partition(model.output_shapes, n_device)
     # partitions[1][1] = 74
     for i, partition in enumerate(partitions):
         print(f'{i}: {partition}')
@@ -502,19 +443,6 @@ if __name__ == '__main__':
 
     for layer, i in enumerate(workload_dependency):
         print(f'layer {layer} {i}')
-
-    # forwarding_sizes = [[] for _ in range(n_layers)]
-    # for layer, i in enumerate(workload_dependency):
-    #     for device, eu in enumerate(i):
-    #         fs = []
-    #         for f in eu[2]:
-    #             if f[0] != device:
-    #                 shape = (*model.output_shapes[layer][:-1], f[1][1] - f[1][0])
-    #                 # print(shape)
-    #                 fs.append(cal_tensor_size(shape))
-    #         forwarding_sizes[layer].append(fs)
-    #
-    # print(forwarding_sizes)
 
     execution_units = gen_executionUnits(n_device, workload_dependency, topology_layers)
     # for eu in execution_units:

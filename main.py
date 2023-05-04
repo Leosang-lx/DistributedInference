@@ -1,10 +1,7 @@
 # This is a sample Python script.
-import queue
 import time
 import torch
-from models.googlenet import GoogLeNet, BasicConv2d
-import torch.nn.functional as F
-from net_analysis import output_input
+from models.googlenet import GoogLeNet
 
 if __name__ == '__main__':
     model = GoogLeNet()

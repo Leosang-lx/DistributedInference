@@ -1,31 +1,49 @@
 import pickle
+import random
 import sys
 from queue import SimpleQueue
 
 import torch
 
+# test channel partition
 
-# import torch.nn.functional as F
-# from torch import nn
+import torch.nn.functional as F
+from torch import nn
+import torch
+x = torch.randn((1,2,3,3))
+layer = nn.Conv2d(2, 2, 3, 1, 1)
+weight = layer.weight
+print(weight.shape)
+out = layer(x)
+print(out.shape)
+weight1 = weight[:1]
+weight2 = weight[1:]
+out1 = F.conv2d(x, weight1, stride=1, padding=1)
+out2 = F.conv2d(x, weight2, stride=1, padding=1)
+out_ = torch.concat([out1, out2], dim=1)
+print(out)
+print(out_)
+print(out_.shape)
+print(torch.allclose(out, out_))
 # from models.googlenet import BasicConv2d
 
-def product(num_list):
-    res = 1
-    for i in num_list:
-        res *= i
-    return res
-
-
-shape = [1, 64, 300, 150]
-a = torch.randn(shape)
-
-print(4 * product(shape))
-print(sys.getsizeof(a.storage()))
-print(len(pickle.dumps(a)) / 1024)
-b = a[..., -1:].clone().detach()
-print(b.shape)
-print(sys.getsizeof(b.storage()))
-print(len(pickle.dumps(b)) / 1024)
+# def product(num_list):
+#     res = 1
+#     for i in num_list:
+#         res *= i
+#     return res
+#
+#
+# shape = [1, 64, 300, 150]
+# a = torch.randn(shape)
+#
+# print(4 * product(shape))
+# print(sys.getsizeof(a.storage()))
+# print(len(pickle.dumps(a)) / 1024)
+# b = a[..., -1:].clone().detach()
+# print(b.shape)
+# print(sys.getsizeof(b.storage()))
+# print(len(pickle.dumps(b)) / 1024)
 
 
 # layer = BasicConv2d(16, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))

@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 
+import numpy as np
 from torch import nn
 
 from ExecutionUnit import ExecutionUnit
@@ -425,7 +426,19 @@ if __name__ == '__main__':
     # for eu in execution_units[1]:
     #     print(eu.required_input, eu.operator, eu.forwarding)
 
-    forward_workers = [[] for _ in range(n_device)]  # unit: byte
+    # forward_workers = [[] for _ in range(n_device)]  # unit: byte
+    # for w, eus in enumerate(execution_units):
+    #     for eu in eus:
+    #         assert isinstance(eu, ExecutionUnit)
+    #         l = eu.layer_num
+    #         f_size = 0
+    #         for f in eu.forwarding:
+    #             if f[0] != w:
+    #                 shape = *model.output_shapes[l][:-1], f[1][1] - f[1][0]
+    #                 # f_size = max(f_size, cal_tensor_size(shape))
+    #                 f_size += cal_tensor_size(shape)  # 多向发送是应该算发送的最大值还是发送总量？
+    #         forward_workers[w].append(f_size)
+    transmission_size = [0 for _ in range(model.depth)]
     for w, eus in enumerate(execution_units):
         for eu in eus:
             assert isinstance(eu, ExecutionUnit)
@@ -434,10 +447,14 @@ if __name__ == '__main__':
             for f in eu.forwarding:
                 if f[0] != w:
                     shape = *model.output_shapes[l][:-1], f[1][1] - f[1][0]
-                    # f_size = max(f_size, cal_tensor_size(shape))
-                    f_size += cal_tensor_size(shape)  # 多向发送是应该算发送的最大值还是发送总量？
-            forward_workers[w].append(f_size)
-    show_transmission_size(forward_workers)
+                    f_size += cal_tensor_size(shape)
+            transmission_size[l] += f_size
+    print(transmission_size)
+    transmission_size = np.asarray(transmission_size)[topology_layers]
+    for l_idx, size in enumerate(transmission_size):
+        print(f'{l_idx}:{size}', end=' ')
+    print()
+    show_transmission_size([transmission_size], ['MPBD'], )
 
     # 在本地模拟DNN拆分子任务执行判断拆分是否正确
     task_queue = [SimpleQueue() for _ in range(n_device)]  # store all tasks

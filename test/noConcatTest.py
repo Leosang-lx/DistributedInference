@@ -454,7 +454,7 @@ if __name__ == '__main__':
                     # f_size = max(f_size, cal_tensor_size(shape))
                     f_size += cal_tensor_size(shape)  # 多向发送是应该算发送的最大值还是发送总量？
             forward_workers[w].append(f_size)
-    show_transmission_size(forward_workers)
+    show_workers_transmission_size(forward_workers)
 
     required_inputs = [execution_units[i][0].required_input[1] for i in range(n_device)]
     print(required_inputs)

@@ -59,7 +59,27 @@ def show_time_intervals(start, end, data, file_name=None):
     plt.show()
 
 
-def show_transmission_size(sizes: list, file_name=None):
+def show_transmission_size(sizess: list, labels: list, file_name=None):
+    fontsize = 16
+    plt.figure(figsize=(10, 5))
+    for idx, sizes in enumerate(sizess):
+        xs = list(range(len(sizes)))
+        ys = np.asarray(sizes) / 1024  # unit: KB
+        plt.plot(xs, ys, label=labels[idx])
+    plt.xlabel('Transmission size (KB)', fontsize=fontsize)
+    plt.ylabel('Layers', fontsize=fontsize)
+    plt.xticks(fontsize=fontsize)
+    plt.yticks(fontsize=fontsize)
+    plt.legend(fontsize=fontsize)
+    # plt.title('Transmission size of layers')
+    if file_name is not None:
+        plt.savefig('D:/华为云盘/毕设/final/figures/' + file_name + '.pdf', bbox_inches='tight')
+    plt.show()
+
+
+
+
+def show_workers_transmission_size(sizes: list, file_name=None):
     n_device = len(sizes)
     plt.figure(figsize=(12, 6))
     for i in range(n_device):

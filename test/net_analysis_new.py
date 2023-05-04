@@ -461,7 +461,7 @@ if __name__ == '__main__':
                     # f_size = max(f_size, cal_tensor_size(shape))
                     f_size += cal_tensor_size(shape)  # 多向发送是应该算发送的最大值还是发送总量？
             forward_workers[w].append(f_size)
-    show_transmission_size(forward_workers)
+    show_workers_transmission_size(forward_workers)
 
 
     # 在本地模拟DNN拆分子任务执行判断拆分是否正确

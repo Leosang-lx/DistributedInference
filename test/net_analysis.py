@@ -528,6 +528,23 @@ if __name__ == '__main__':
                     f_size += cal_tensor_size(shape)  # 多向发送是应该算发送的最大值还是发送总量？
             forward_workers[w].append(f_size)
     show_workers_transmission_size(forward_workers)
+    transmission_size = [0 for _ in range(model.depth)]
+    for w, eus in enumerate(execution_units):
+        for eu in eus:
+            assert isinstance(eu, ExecutionUnit)
+            l = eu.layer_num
+            f_size = 0
+            for f in eu.forwarding:
+                if f[0] != w:
+                    shape = *model.output_shapes[l][:-1], f[1][1] - f[1][0]
+                    f_size += cal_tensor_size(shape)
+            transmission_size[l] += f_size
+    print(transmission_size)
+    transmission_size = np.asarray(transmission_size)[topology_layers]
+    for l_idx, size in enumerate(transmission_size):
+        print(f'{l_idx}:{size}', end=' ')
+    print()
+    show_transmission_size([transmission_size], ['PCC'], )
 
 
     # 在本地模拟DNN拆分子任务执行判断拆分是否正确
@@ -547,7 +564,7 @@ if __name__ == '__main__':
     simulate = True
     if not simulate:
         sys.exit(0)
-    local = True
+    local = False
     if local:
         for device, ri in enumerate(required_inputs):
             recv_input[device][-1].append(x[..., ri[0]:ri[1]])  # cut from the last_array dimension of 4D input
@@ -592,12 +609,13 @@ if __name__ == '__main__':
             loop.run_until_complete(asyncio.gather(*send_tasks))
         except Exception as e:
             print(f'Error occurred when send required input to workers:\n{e}')
-
+        end = 0
         try:
             data = recv_data(m.worker_sockets[0])
-            consumption = time.time() - start
-            print(torch.allclose(outputs[-1], data))
+            end = time.time()
+            consumption = end - start
             print(f'Recv final result in {consumption}s')
+            print(torch.allclose(outputs[-1], data[1]))
         except timeout:
             print('Recv results time out!')
         except Exception as e:
@@ -606,11 +624,14 @@ if __name__ == '__main__':
         # 接受workers生成的计算区间：并尝试绘图
         recvs = None
         accum_time = None
+        total = [0 for _ in range(n_device)]
         try:
             recv_tasks = [async_recv_data(sock) for sock in m.worker_sockets]
             recvs = loop.run_until_complete(asyncio.gather(*recv_tasks))  # execute_intervals of workers
+            for i in range(n_device):
+                total[i] = recvs[i][-1] - recvs[i][0]
             accum_time = [np.asarray(intervals) for intervals in recvs]
-            show_time_intervals(recvs)
+            show_time_intervals(start, end, recvs, 'partitionwithConcentratedConcat_googlenet_224_2')
 
         except timeout:
             print('Recv intervals time out!')
@@ -644,8 +665,9 @@ if __name__ == '__main__':
             task_ids = [execution_units[w][i].layer_num for i in gap_idx10]
             gap_workers.append(list(zip(task_ids, gap[gap_idx10])))
 
-        for w, exe_sum in enumerate(sums_workers):
-            print(f'worker {w+1} execution sum: {exe_sum}')
+        for w in range(n_device):
+            exe_sum = sums_workers[w]
+            print(f'worker {w + 1} execution sum: {exe_sum} with usage {exe_sum / total[w]}')
         # show the most time-consuming execution and gap intervals in the process
         print("The most time-consuming tasks with layer number")
         for w, execution_worker in enumerate(execution_workers):

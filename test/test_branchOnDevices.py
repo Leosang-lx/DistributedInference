@@ -194,7 +194,7 @@ def gen_layerConfig(layer: nn.Module | str):
 
 
 if __name__ == '__main__':
-    n_device = 2
+    n_device = 3
     model.input_shape = 3, 224, 224
     next_array = model.next
     translate_next_array(next_array)
@@ -205,8 +205,12 @@ if __name__ == '__main__':
     layer_distribution1 = [0,1,2,3,4,6,7,70,13,14,71,19,21,22,72,28,29,73,35,36,74,42,43,75,49,50,76,55,57,58,77,64,65,78]
     layer_distribution2 = list(range(model.depth))
     layer_distribution2 = [i for i in layer_distribution2 if i not in layer_distribution1]
+    if n_device == 3:
+        layer_distribution3 = [5,12,20,27,34,41,48,56,63]
+        layer_distribution2 = [i for i in layer_distribution2 if i not in layer_distribution3]
     dis = [layer_distribution1, layer_distribution2]
-    execution_units = [[],[]]
+    execution_units = [[] for _ in range(n_device)]
+
     for l in layer_distribution1:
         dependent_layers = layers_dependency[l]
         if l == 0:
@@ -220,8 +224,11 @@ if __name__ == '__main__':
         else:
             forwarding = [(0, (0, model.output_shapes[l][-1]))]
             if len(next_array[l]) > 1:
-                forwarding.append((1, (0, model.output_shapes[l][-1])))
+                for w in range(1, n_device):
+                    forwarding.append((w, (0, model.output_shapes[l][-1])))
+
         execution_units[0].append(ExecutionUnit(required_input, layer_config, forwarding, 0, l))
+
     for l in layer_distribution2:
         dependent_layers = layers_dependency[l]
         if l == 0:
@@ -237,6 +244,23 @@ if __name__ == '__main__':
             else:
                 forwarding.append((1, (0, model.output_shapes[l][-1])))
         execution_units[1].append(ExecutionUnit(required_input, layer_config, forwarding, 1, l))
+
+    if n_device == 3:
+        for l in layer_distribution3:
+            dependent_layers = layers_dependency[l]
+            if l == 0:
+                input_range = (0, 224)
+            else:
+                input_range = (0, model.output_shapes[dependent_layers[0]][-1])
+            required_input = (dependent_layers, input_range)
+            layer_config = gen_layerConfig(layers[l])
+            forwarding = []
+            if len(next_array[l]) != 0:
+                if layers[next_array[l][0]] == 'concat':
+                    forwarding.append((0, (0, model.output_shapes[l][-1])))
+                else:
+                    forwarding.append((1, (0, model.output_shapes[l][-1])))
+            execution_units[2].append(ExecutionUnit(required_input, layer_config, forwarding, 1, l))
 
     for eu in execution_units[0]:
         print(eu.required_input, eu.operator, eu.forwarding)
@@ -256,6 +280,23 @@ if __name__ == '__main__':
                     f_size += cal_tensor_size(shape)  # 多向发送是应该算发送的最大值还是发送总量？
             forward_workers[w].append(f_size)
     show_workers_transmission_size(forward_workers)
+    transmission_size = [0 for _ in range(model.depth)]
+    for w, eus in enumerate(execution_units):
+        for eu in eus:
+            assert isinstance(eu, ExecutionUnit)
+            l = eu.layer_num
+            f_size = 0
+            for f in eu.forwarding:
+                if f[0] != w:
+                    shape = *model.output_shapes[l][:-1], f[1][1] - f[1][0]
+                    f_size += cal_tensor_size(shape)
+            transmission_size[l] += f_size
+    print(transmission_size)
+    transmission_size = np.asarray(transmission_size)[topology_layers]
+    for l_idx, size in enumerate(transmission_size):
+        print(f'{l_idx}:{size}', end=' ')
+    print()
+    show_transmission_size([transmission_size], ['BOD'], )
 
     # 在本地模拟DNN拆分子任务执行判断拆分是否正确
     task_queue = [SimpleQueue() for _ in range(n_device)]  # store all tasks
@@ -302,7 +343,7 @@ if __name__ == '__main__':
         m.start()
         time.sleep(2)
         # first_inputs = [x[..., ri[0]:ri[1]].clone().detach() for ri in required_inputs]
-        first_inputs = [x, None]
+        first_inputs = [x, None, None]
         loop = asyncio.get_event_loop()
         print('Send subtasks and input to workers...')
         # send subtasks
@@ -321,14 +362,15 @@ if __name__ == '__main__':
             loop.run_until_complete(asyncio.gather(*send_tasks))
         except Exception as e:
             print(f'Error occurred when send required input to workers:\n{e}')
-
+        end = 0
         try:
             # data = recv_data(m.worker_sockets[0])  # 只收concat之后来自一个worker的output
 
             # recv_tasks = [async_recv_data(sock) for sock in m.worker_sockets]
             # results = loop.run_until_complete(asyncio.gather(*recv_tasks))
             results = recv_data(m.worker_sockets[0])
-            consumption = time.time() - start
+            end = time.time()
+            consumption = end - start
             print(f'Recv final result in {consumption}s')
             # results.sort(key=lambda item: item[0])
             # data = torch.cat([r[1] for r in results], -1)
@@ -341,11 +383,14 @@ if __name__ == '__main__':
         # 接受workers生成的计算区间：并尝试绘图
         recvs = None
         accum_time = None
+        total = [0 for _ in range(n_device)]
         try:
             recv_tasks = [async_recv_data(sock) for sock in m.worker_sockets]
             recvs = loop.run_until_complete(asyncio.gather(*recv_tasks))  # execute_intervals of workers
+            for i in range(n_device):
+                total[i] = recvs[i][-1] - recvs[i][0]
             accum_time = [np.asarray(intervals) for intervals in recvs]
-            show_time_intervals(recvs)
+            show_time_intervals(start, end, recvs, 'branchOnDevices_googlenet_224_3')
 
         except timeout:
             print('Recv intervals time out!')
@@ -378,8 +423,9 @@ if __name__ == '__main__':
             task_ids = [execution_units[w][i].layer_num for i in gap_idx10]
             gap_workers.append(list(zip(task_ids, gap[gap_idx10])))
 
-        for w, exe_sum in enumerate(sums_workers):
-            print(f'worker {w + 1} execution sum: {exe_sum}')
+        for w in range(n_device):
+            exe_sum = sums_workers[w]
+            print(f'worker {w + 1} execution sum: {exe_sum} with usage {exe_sum / total[w]}')
         # show the most time-consuming execution and gap intervals in the process
         print("The most time-consuming tasks with layer number")
         for w, execution_worker in enumerate(execution_workers):

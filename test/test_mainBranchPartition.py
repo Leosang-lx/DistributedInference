@@ -373,7 +373,7 @@ def gen_layerConfig(layer: nn.Module | str):
 
 
 if __name__ == '__main__':
-    n_device = 3
+    n_device = 2
     n_device_main = n_device - 1
     model.input_shape = 3, 224, 224
     next_array = model.next
@@ -426,18 +426,19 @@ if __name__ == '__main__':
     # for eu in execution_units[1]:
     #     print(eu.required_input, eu.operator, eu.forwarding)
 
-    # forward_workers = [[] for _ in range(n_device)]  # unit: byte
-    # for w, eus in enumerate(execution_units):
-    #     for eu in eus:
-    #         assert isinstance(eu, ExecutionUnit)
-    #         l = eu.layer_num
-    #         f_size = 0
-    #         for f in eu.forwarding:
-    #             if f[0] != w:
-    #                 shape = *model.output_shapes[l][:-1], f[1][1] - f[1][0]
-    #                 # f_size = max(f_size, cal_tensor_size(shape))
-    #                 f_size += cal_tensor_size(shape)  # 多向发送是应该算发送的最大值还是发送总量？
-    #         forward_workers[w].append(f_size)
+    forward_workers = [[] for _ in range(n_device)]  # unit: byte
+    for w, eus in enumerate(execution_units):
+        for eu in eus:
+            assert isinstance(eu, ExecutionUnit)
+            l = eu.layer_num
+            f_size = 0
+            for f in eu.forwarding:
+                if f[0] != w:
+                    shape = *model.output_shapes[l][:-1], f[1][1] - f[1][0]
+                    # f_size = max(f_size, cal_tensor_size(shape))
+                    f_size += cal_tensor_size(shape)  # 多向发送是应该算发送的最大值还是发送总量？
+            forward_workers[w].append(f_size)
+    show_workers_transmission_size(forward_workers)
     transmission_size = [0 for _ in range(model.depth)]
     for w, eus in enumerate(execution_units):
         for eu in eus:
@@ -541,16 +542,19 @@ if __name__ == '__main__':
         # 接受workers生成的计算区间：并尝试绘图
         recvs = None
         accum_time = None
+        total = [0 for _ in range(n_device)]
         try:
             recv_tasks = [async_recv_data(sock) for sock in m.worker_sockets]
             recvs = loop.run_until_complete(asyncio.gather(*recv_tasks))  # execute_intervals of workers
+            for i in range(n_device):
+                total[i] = recvs[i][-1] - recvs[i][0]
             accum_time = [np.asarray(intervals) for intervals in recvs]
 
         except timeout:
             print('Recv intervals time out!')
         except Exception as e:
             print(f'Error occurred when recv intervals:\n{e}')
-        show_time_intervals(start, end, recvs, 'mainBranchPartition_googlenet_224')
+        show_time_intervals(start, end, recvs, 'mainBranchPartition_googlenet_224_2')
 
         ### replay the execution process:
         print("----------------------Process Replay----------------------")
@@ -578,8 +582,9 @@ if __name__ == '__main__':
             task_ids = [execution_units[w][i].layer_num for i in gap_idx10]
             gap_workers.append(list(zip(task_ids, gap[gap_idx10])))
 
-        for w, exe_sum in enumerate(sums_workers):
-            print(f'worker {w + 1} execution sum: {exe_sum}')
+        for w in range(n_device):
+            exe_sum = sums_workers[w]
+            print(f'worker {w + 1} execution sum: {exe_sum} with usage {exe_sum / total[w]}')
         # show the most time-consuming execution and gap intervals in the process
         print("The most time-consuming tasks with layer number")
         for w, execution_worker in enumerate(execution_workers):

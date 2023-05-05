@@ -5,10 +5,10 @@ import torch
 from models.googlenet import Inception
 
 # layer = nn.Conv2d(3, 64, 3, 1, 1)
-input_shape = (1, 256, 28, 28)
+input_shape = (1, 832, 7, 7)
 x = torch.randn(input_shape)
 times = []
-layer = Inception(256, 128, 128, 192, 32, 96, 64)
+layer = Inception(832, 384, 192, 384, 48, 128, 128)
 layers = [layer.branch1, layer.branch2, layer.branch3, layer.branch4]
 for i in range(4):
     branch = layers[i]

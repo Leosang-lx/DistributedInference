@@ -561,7 +561,7 @@ if __name__ == '__main__':
     x = torch.randn((1, *model.input_shape))  # test input
     outputs = cal_output(topology_layers, layers_dependency, x)
     # how to store the recv input and how to judge required input is satisfied
-    simulate = True
+    simulate = False
     if not simulate:
         sys.exit(0)
     local = False
